@@ -115,6 +115,71 @@ export function useLenders() {
   })
 }
 
+// Country Authorities Hooks
+export function useCountryAuthority(countryCode) {
+  return useQuery({
+    queryKey: ['countryAuthority', countryCode],
+    queryFn: async () => {
+      if (!countryCode) return null
+      const { data, error } = await supabase
+        .from('country_authorities')
+        .select('*')
+        .eq('country_code', countryCode)
+        .single()
+      if (error && error.code !== 'PGRST116') throw error // PGRST116 = no rows found
+      return data
+    },
+    enabled: !!countryCode,
+    staleTime: 1000 * 60 * 30, // 30 minutes
+  })
+}
+
+// User Profile Hook
+export function useUserProfile(userId) {
+  return useQuery({
+    queryKey: ['userProfile', userId],
+    queryFn: async () => {
+      if (!userId) return null
+      const { data, error } = await supabase
+        .from('user_profiles')
+        .select('*')
+        .eq('user_id', userId)
+        .single()
+      if (error && error.code !== 'PGRST116') throw error
+      return data
+    },
+    enabled: !!userId,
+  })
+}
+
+// Check if user profile is completed
+export function useProfileCompletion(userId) {
+  return useQuery({
+    queryKey: ['profileCompletion', userId],
+    queryFn: async () => {
+      if (!userId) return { isCompleted: false, profile: null }
+      
+      const { data, error } = await supabase
+        .from('user_profiles')
+        .select('*')
+        .eq('user_id', userId)
+        .single()
+      
+      if (error && error.code !== 'PGRST116') throw error
+      
+      // Profile is complete if it exists and has required fields filled
+      const isCompleted = data && 
+        data.profile_completed === true &&
+        data.full_name && 
+        data.full_name.trim() !== ''
+      
+      return { isCompleted, profile: data }
+    },
+    enabled: !!userId,
+    staleTime: 1000 * 60 * 2, // 2 minutes
+  })
+}
+
 // Business Steps Hooks
 export function useBusinessSteps(businessTypeId) {
   return useQuery({

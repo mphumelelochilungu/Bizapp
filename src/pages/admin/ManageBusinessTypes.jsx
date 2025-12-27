@@ -2,7 +2,7 @@ import { useState, useMemo } from 'react'
 import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/Card'
 import { Button } from '../../components/ui/Button'
 import { Input, Select, Textarea } from '../../components/ui/Input'
-import { Plus, Edit, Trash2, Loader2, AlertCircle } from 'lucide-react'
+import { Plus, Edit, Trash2, Loader2, AlertCircle, FileText, Video, Globe, Upload, X, Save, CheckCircle } from 'lucide-react'
 import { useBusinessTypes } from '../../hooks/useSupabase'
 import { supabase } from '../../lib/supabase'
 import { formatCurrency } from '../../lib/utils'
@@ -30,6 +30,115 @@ export function ManageBusinessTypes() {
   const [showCustomCategory, setShowCustomCategory] = useState(false)
   const [saving, setSaving] = useState(false)
   const [formError, setFormError] = useState('')
+  
+  // Overview modal state
+  const [showOverviewModal, setShowOverviewModal] = useState(false)
+  const [overviewBusiness, setOverviewBusiness] = useState(null)
+  const [overviewData, setOverviewData] = useState({
+    overview_content: '',
+    overview_video_url: '',
+    overview_web_url: '',
+    overview_pdf_url: ''
+  })
+  const [savingOverview, setSavingOverview] = useState(false)
+  const [overviewSaved, setOverviewSaved] = useState(false)
+  const [uploadingPdf, setUploadingPdf] = useState(false)
+
+  // Handle PDF file upload
+  const handlePdfUpload = async (e) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+
+    // Validate file type
+    if (file.type !== 'application/pdf') {
+      alert('Please select a PDF file')
+      return
+    }
+
+    // Validate file size (max 10MB)
+    if (file.size > 10 * 1024 * 1024) {
+      alert('File size must be less than 10MB')
+      return
+    }
+
+    setUploadingPdf(true)
+    try {
+      // Create unique filename
+      const fileExt = file.name.split('.').pop()
+      const fileName = `${overviewBusiness.id}_${Date.now()}.${fileExt}`
+      const filePath = `business-guides/${fileName}`
+
+      // Upload to Supabase Storage
+      const { data, error: uploadError } = await supabase.storage
+        .from('documents')
+        .upload(filePath, file, {
+          cacheControl: '3600',
+          upsert: true
+        })
+
+      if (uploadError) {
+        // If bucket doesn't exist, show helpful message
+        if (uploadError.message.includes('bucket') || uploadError.message.includes('not found')) {
+          alert('Storage bucket "documents" not found. Please create it in Supabase Storage first, or paste a URL instead.')
+          throw uploadError
+        }
+        throw uploadError
+      }
+
+      // Get public URL
+      const { data: urlData } = supabase.storage
+        .from('documents')
+        .getPublicUrl(filePath)
+
+      // Update the form with the URL
+      setOverviewData(prev => ({ ...prev, overview_pdf_url: urlData.publicUrl }))
+      alert('PDF uploaded successfully!')
+    } catch (err) {
+      console.error('Upload error:', err)
+      // Don't show alert again if already shown
+      if (!err.message?.includes('bucket')) {
+        alert('Failed to upload PDF: ' + err.message)
+      }
+    } finally {
+      setUploadingPdf(false)
+    }
+  }
+
+  // Open overview modal
+  const handleOpenOverview = (business) => {
+    setOverviewBusiness(business)
+    setOverviewData({
+      overview_content: business.overview_content || '',
+      overview_video_url: business.overview_video_url || '',
+      overview_web_url: business.overview_web_url || '',
+      overview_pdf_url: business.overview_pdf_url || ''
+    })
+    setOverviewSaved(false)
+    setShowOverviewModal(true)
+  }
+
+  // Save overview
+  const handleSaveOverview = async () => {
+    if (!overviewBusiness) return
+    
+    setSavingOverview(true)
+    try {
+      const { error } = await supabase
+        .from('business_types')
+        .update(overviewData)
+        .eq('id', overviewBusiness.id)
+      
+      if (error) throw error
+      
+      await refetch()
+      setOverviewSaved(true)
+      setTimeout(() => setOverviewSaved(false), 2000)
+    } catch (err) {
+      alert('Failed to save overview: ' + err.message)
+    } finally {
+      setSavingOverview(false)
+    }
+  }
 
   const handleAdd = () => {
     setEditingBusiness(null)
@@ -223,16 +332,25 @@ export function ManageBusinessTypes() {
                           {formatCurrency(business.monthly_profit)}
                         </td>
                         <td className="py-3 px-4 text-right">
-                          <div className="flex items-center justify-end space-x-2">
+                          <div className="flex items-center justify-end space-x-1">
+                            <button
+                              onClick={() => handleOpenOverview(business)}
+                              className={`p-2 rounded ${business.overview_content ? 'text-green-600 hover:bg-green-50' : 'text-slate-400 hover:bg-slate-50'}`}
+                              title="Manage Overview"
+                            >
+                              <FileText className="h-4 w-4" />
+                            </button>
                             <button
                               onClick={() => handleEdit(business)}
                               className="p-2 text-blue-600 hover:bg-blue-50 rounded"
+                              title="Edit"
                             >
                               <Edit className="h-4 w-4" />
                             </button>
                             <button
                               onClick={() => handleDelete(business.id)}
                               className="p-2 text-red-600 hover:bg-red-50 rounded"
+                              title="Delete"
                             >
                               <Trash2 className="h-4 w-4" />
                             </button>
@@ -376,6 +494,215 @@ export function ManageBusinessTypes() {
               </div>
             </CardContent>
           </Card>
+        </div>
+      )}
+
+      {/* Overview Modal */}
+      {showOverviewModal && overviewBusiness && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-3xl max-h-[90vh] overflow-y-auto">
+            {/* Header */}
+            <div className="sticky top-0 bg-white border-b border-slate-200 p-6 flex items-start justify-between">
+              <div>
+                <h2 className="text-xl font-bold text-slate-900">Business Overview</h2>
+                <p className="text-slate-600">{overviewBusiness.name}</p>
+              </div>
+              <button 
+                onClick={() => setShowOverviewModal(false)}
+                className="text-slate-400 hover:text-slate-600 p-1"
+              >
+                <X className="h-6 w-6" />
+              </button>
+            </div>
+
+            {/* Content */}
+            <div className="p-6 space-y-6">
+              {/* Overview Content */}
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-2">
+                  <FileText className="h-4 w-4 inline mr-2 text-blue-600" />
+                  Overview Content
+                </label>
+                <p className="text-xs text-slate-500 mb-2">
+                  Write what users need to know about this business - basics, requirements, tips for success, etc.
+                </p>
+                <textarea
+                  value={overviewData.overview_content}
+                  onChange={(e) => setOverviewData({...overviewData, overview_content: e.target.value})}
+                  placeholder="Write a detailed overview of this business type...
+
+Example:
+## What You Need to Know
+- This business involves...
+- Key skills required...
+
+## Requirements
+1. Equipment needed
+2. Licenses required
+3. Initial investment
+
+## Tips for Success
+- Start small and grow
+- Focus on quality
+- Build customer relationships"
+                  rows={12}
+                  className="w-full px-4 py-3 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono text-sm"
+                />
+              </div>
+
+              {/* Video URL */}
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-2">
+                  <Video className="h-4 w-4 inline mr-2 text-red-600" />
+                  YouTube Video URL
+                </label>
+                <input
+                  type="url"
+                  value={overviewData.overview_video_url}
+                  onChange={(e) => setOverviewData({...overviewData, overview_video_url: e.target.value})}
+                  placeholder="https://youtube.com/watch?v=..."
+                  className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+                <p className="text-xs text-slate-500 mt-1">
+                  Link to a tutorial or explainer video about this business
+                </p>
+              </div>
+
+              {/* Web Resource URL */}
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-2">
+                  <Globe className="h-4 w-4 inline mr-2 text-green-600" />
+                  Web Resource URL
+                </label>
+                <input
+                  type="url"
+                  value={overviewData.overview_web_url}
+                  onChange={(e) => setOverviewData({...overviewData, overview_web_url: e.target.value})}
+                  placeholder="https://example.com/business-guide"
+                  className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+                <p className="text-xs text-slate-500 mt-1">
+                  Link to an external website, article, or resource about this business
+                </p>
+              </div>
+
+              {/* PDF Upload/URL */}
+              <div className="p-4 bg-orange-50 rounded-lg border border-orange-200">
+                <label className="block text-sm font-medium text-orange-700 mb-3">
+                  <Upload className="h-4 w-4 inline mr-2" />
+                  PDF Business Guide
+                </label>
+                
+                {/* Upload Button */}
+                <div className="flex items-center space-x-3 mb-3">
+                  <label className={`flex items-center space-x-2 px-4 py-2 rounded-lg cursor-pointer transition-colors ${
+                    uploadingPdf 
+                      ? 'bg-orange-200 text-orange-600 cursor-not-allowed' 
+                      : 'bg-orange-600 text-white hover:bg-orange-700'
+                  }`}>
+                    {uploadingPdf ? (
+                      <>
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                        <span>Uploading...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Upload className="h-4 w-4" />
+                        <span>Upload PDF</span>
+                      </>
+                    )}
+                    <input
+                      type="file"
+                      accept=".pdf,application/pdf"
+                      onChange={handlePdfUpload}
+                      disabled={uploadingPdf}
+                      className="hidden"
+                    />
+                  </label>
+                  <span className="text-sm text-slate-500">or paste URL below</span>
+                </div>
+
+                {/* URL Input */}
+                <input
+                  type="url"
+                  value={overviewData.overview_pdf_url}
+                  onChange={(e) => setOverviewData({...overviewData, overview_pdf_url: e.target.value})}
+                  placeholder="https://example.com/business-guide.pdf"
+                  className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500 bg-white"
+                />
+                
+                {/* Current PDF indicator */}
+                {overviewData.overview_pdf_url && (
+                  <div className="mt-2 flex items-center justify-between">
+                    <a 
+                      href={overviewData.overview_pdf_url} 
+                      target="_blank" 
+                      rel="noopener noreferrer"
+                      className="text-sm text-orange-600 hover:underline flex items-center"
+                    >
+                      <FileText className="h-4 w-4 mr-1" />
+                      View current PDF
+                    </a>
+                    <button
+                      type="button"
+                      onClick={() => setOverviewData({...overviewData, overview_pdf_url: ''})}
+                      className="text-sm text-red-600 hover:underline"
+                    >
+                      Remove
+                    </button>
+                  </div>
+                )}
+                
+                <p className="text-xs text-orange-600 mt-2">
+                  Max file size: 10MB. Uploads to Supabase Storage.
+                </p>
+              </div>
+            </div>
+
+            {/* Footer */}
+            <div className="sticky bottom-0 bg-white border-t border-slate-200 p-6 flex items-center justify-between">
+              <div className="text-sm text-slate-500">
+                {overviewData.overview_content ? (
+                  <span className="text-green-600 flex items-center">
+                    <CheckCircle className="h-4 w-4 mr-1" />
+                    Overview content added
+                  </span>
+                ) : (
+                  <span>No overview content yet</span>
+                )}
+              </div>
+              <div className="flex items-center space-x-3">
+                <Button 
+                  variant="outline"
+                  onClick={() => setShowOverviewModal(false)}
+                >
+                  Cancel
+                </Button>
+                <Button 
+                  onClick={handleSaveOverview}
+                  disabled={savingOverview}
+                  className={overviewSaved ? 'bg-green-600 hover:bg-green-700' : ''}
+                >
+                  {savingOverview ? (
+                    <>
+                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                      Saving...
+                    </>
+                  ) : overviewSaved ? (
+                    <>
+                      <CheckCircle className="h-4 w-4 mr-2" />
+                      Saved!
+                    </>
+                  ) : (
+                    <>
+                      <Save className="h-4 w-4 mr-2" />
+                      Save Overview
+                    </>
+                  )}
+                </Button>
+              </div>
+            </div>
+          </div>
         </div>
       )}
     </div>

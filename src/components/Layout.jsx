@@ -1,10 +1,11 @@
 import { useState } from 'react'
-import { Link, useLocation } from 'react-router-dom'
+import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from '../hooks/useSupabase'
+import { supabase } from '../lib/supabase'
 import { 
   Home, Briefcase, DollarSign, TrendingUp, CreditCard, 
   Wallet, FileText, User, Menu, X, Settings, BarChart3,
-  Building2, Users, Database, Code, ArrowLeft, Shield, Tag
+  Building2, Users, Database, Code, ArrowLeft, Shield, Tag, Globe, BookOpen, Receipt, LogOut
 } from 'lucide-react'
 import { cn } from '../lib/utils'
 
@@ -12,6 +13,10 @@ const navigation = [
   { name: 'Home', href: '/dashboard', icon: Home },
   { name: 'My Business', href: '/mybusiness', icon: Briefcase },
   { name: 'Finances', href: '/finances', icon: DollarSign },
+  { name: 'Accounting', href: '/accounting', icon: BookOpen },
+  { name: 'Account Reports', href: '/account-reports', icon: BarChart3 },
+  { name: 'Tax Settings', href: '/tax-settings', icon: Receipt },
+  { name: 'Tax Reports', href: '/tax-reports', icon: FileText },
   { name: 'Reports', href: '/reports', icon: TrendingUp },
   { name: 'Bank Accounts', href: '/bank-accounts', icon: CreditCard },
   { name: 'Loans & Savings', href: '/loans', icon: Building2 },
@@ -25,6 +30,8 @@ const adminNavigation = [
   { name: 'Manage Categories', href: '/admin/categories', icon: Tag },
   { name: 'Manage Steps', href: '/admin/steps', icon: Settings },
   { name: 'Manage Lenders', href: '/admin/lenders', icon: Users },
+  { name: 'Country Authorities', href: '/admin/authorities', icon: Globe },
+  { name: 'App Settings', href: '/admin/settings', icon: Settings },
   { name: 'Test Supabase', href: '/admin/test-supabase', icon: Database },
   { name: 'SQL Setup', href: '/admin/sql-setup', icon: Code },
 ]
@@ -32,12 +39,22 @@ const adminNavigation = [
 export function Layout({ children }) {
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const location = useLocation()
+  const navigate = useNavigate()
   const { data: user } = useAuth()
   const userRole = user?.user_metadata?.role || 'user'
   const isAdmin = location.pathname.startsWith('/admin')
   const canAccessAdmin = userRole === 'admin'
 
   const navItems = isAdmin ? adminNavigation : navigation
+
+  const handleLogout = async () => {
+    try {
+      await supabase.auth.signOut()
+      navigate('/login')
+    } catch (error) {
+      console.error('Error logging out:', error)
+    }
+  }
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100">
@@ -150,6 +167,17 @@ export function Layout({ children }) {
               </>
             )}
           </nav>
+
+          {/* Logout Button */}
+          <div className="p-4 border-t border-slate-200">
+            <button
+              onClick={handleLogout}
+              className="flex items-center space-x-3 px-4 py-3 rounded-lg text-sm font-medium text-red-600 hover:bg-red-50 w-full transition-colors"
+            >
+              <LogOut className="h-5 w-5" />
+              <span>Logout</span>
+            </button>
+          </div>
         </div>
       </aside>
 

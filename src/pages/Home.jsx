@@ -1,11 +1,89 @@
 import { useState, useMemo } from 'react'
-import { Search, TrendingUp, DollarSign, Clock, Plus, Loader2 } from 'lucide-react'
+import { Search, TrendingUp, DollarSign, Clock, Plus, Loader2, Info, X, Download, CheckCircle, AlertTriangle, FileText, Video, Globe, ExternalLink, Tag, Lock } from 'lucide-react'
 import { Card, CardContent } from '../components/ui/Card'
 import { Button } from '../components/ui/Button'
 import { Input } from '../components/ui/Input'
-import { formatCurrency } from '../lib/utils'
+import { useCurrency } from '../contexts/CurrencyContext'
 import { useNavigate } from 'react-router-dom'
-import { useBusinessTypes } from '../hooks/useSupabase'
+import { useBusinessTypes, useAuth } from '../hooks/useSupabase'
+
+// Business overview data - what you need to know for each business type
+const getBusinessOverview = (business, formatCurrency) => {
+  // Generic overview structure - can be customized per business type in the future
+  const overviews = {
+    'Poultry Farming': {
+      basics: [
+        'Raising chickens for eggs (layers) or meat (broilers)',
+        'Requires proper housing, feeding, and disease management',
+        'Can start small and scale up gradually',
+        'High demand product with consistent market'
+      ],
+      requirements: [
+        'Land or space for chicken coop (minimum 100 sq ft for 50 birds)',
+        'Poultry housing/coop with proper ventilation',
+        'Feeders and drinkers',
+        'Day-old chicks or point-of-lay birds',
+        'Feed (starter, grower, finisher)',
+        'Vaccines and medications',
+        'Lighting system for layers'
+      ],
+      tips: [
+        'Start with 50-100 birds to learn the business',
+        'Maintain strict biosecurity measures',
+        'Keep detailed records of feed, mortality, and sales',
+        'Build relationships with feed suppliers for better prices'
+      ]
+    },
+    'Fish Farming': {
+      basics: [
+        'Raising fish in controlled environments for food',
+        'Popular species: Tilapia, Catfish, Carp',
+        'Can be done in ponds, tanks, or cages',
+        'Growing demand for fresh fish protein'
+      ],
+      requirements: [
+        'Fish pond or tanks (concrete, plastic, or earthen)',
+        'Water source and quality management system',
+        'Fingerlings (baby fish) from certified hatchery',
+        'Fish feed (floating or sinking pellets)',
+        'Aerators for oxygen supply',
+        'Nets and harvesting equipment',
+        'Water testing kit'
+      ],
+      tips: [
+        'Start with hardy species like Tilapia or Catfish',
+        'Monitor water quality daily (pH, oxygen, temperature)',
+        'Feed fish 2-3 times daily at consistent times',
+        'Plan your market before stocking fish'
+      ]
+    }
+  }
+
+  // Return specific overview or generate generic one
+  return overviews[business.name] || {
+    basics: [
+      `${business.name} is a ${business.difficulty.toLowerCase()}-difficulty business`,
+      `Part of the ${business.category} sector`,
+      business.description,
+      `Estimated startup cost: ${formatCurrency(business.startup_cost)}`
+    ],
+    requirements: [
+      'Business registration and licenses',
+      'Suitable location or workspace',
+      'Initial inventory or equipment',
+      'Working capital for first 3 months',
+      'Marketing materials and branding',
+      'Record keeping system'
+    ],
+    tips: [
+      'Research your local market thoroughly',
+      'Start small and grow gradually',
+      'Keep detailed financial records',
+      'Build relationships with suppliers and customers',
+      'Reinvest profits for sustainable growth'
+    ]
+  }
+}
 
 // Complete business types data
 const sampleBusinessTypes = [
@@ -149,10 +227,77 @@ const sampleBusinessTypes = [
   { id: 119, name: 'Nutrition Consulting', category: 'Health & Social Services', startupCost: 1500, monthlyProfit: 900, difficulty: 'Easy', description: 'Dietary advice services' },
 ]
 
+// Category icons mapping
+const categoryIcons = {
+  'Agriculture & Farming': '🌾',
+  'Food Processing & Hospitality': '🍽️',
+  'Retail & Trading': '🛒',
+  'Services & Personal Care': '💆',
+  'Manufacturing & Crafts': '🔨',
+  'Digital & Creative': '💻',
+  'Transport & Logistics': '🚚',
+  'Construction & Real Estate': '🏗️',
+  'Green & Environmental': '🌱',
+  'Health & Social Services': '🏥',
+}
+
 export function Home() {
   const [searchTerm, setSearchTerm] = useState('')
   const [selectedCategory, setSelectedCategory] = useState('All')
+  const [showOverview, setShowOverview] = useState(false)
+  const [selectedBusiness, setSelectedBusiness] = useState(null)
   const navigate = useNavigate()
+  const { data: user } = useAuth()
+  const { formatCurrency } = useCurrency()
+
+  // Open overview modal
+  const openOverview = (business) => {
+    setSelectedBusiness(business)
+    setShowOverview(true)
+  }
+
+  // Generate PDF download (placeholder - would need backend for real PDF)
+  const handleDownloadPDF = () => {
+    if (!selectedBusiness) return
+    
+    // Create a simple text content for download
+    const overview = getBusinessOverview(selectedBusiness, formatCurrency)
+    const content = `
+${selectedBusiness.name.toUpperCase()} - BUSINESS OVERVIEW
+${'='.repeat(50)}
+
+CATEGORY: ${selectedBusiness.category}
+DIFFICULTY: ${selectedBusiness.difficulty}
+STARTUP COST: ${formatCurrency(selectedBusiness.startup_cost)}
+EXPECTED MONTHLY PROFIT: ${formatCurrency(selectedBusiness.monthly_profit)}
+
+DESCRIPTION:
+${selectedBusiness.description}
+
+WHAT YOU NEED TO KNOW:
+${overview.basics.map((b, i) => `${i + 1}. ${b}`).join('\n')}
+
+REQUIREMENTS:
+${overview.requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
+
+TIPS FOR SUCCESS:
+${overview.tips.map((t, i) => `${i + 1}. ${t}`).join('\n')}
+
+${'='.repeat(50)}
+Generated by BizApp - Your Business Journey Partner
+    `.trim()
+
+    // Create and download file
+    const blob = new Blob([content], { type: 'text/plain' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `${selectedBusiness.name.replace(/\s+/g, '_')}_Overview.txt`
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    URL.revokeObjectURL(url)
+  }
   
   // Fetch business types from database
   const { data: businessTypes, isLoading, error } = useBusinessTypes()
@@ -216,108 +361,379 @@ export function Home() {
         </p>
       </div>
 
-      {/* Search and Filter */}
-      <div className="mb-8 space-y-4">
-        <div className="relative">
-          <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-5 w-5 text-slate-400" />
-          <input
-            type="text"
-            placeholder="Search business types..."
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            className="w-full pl-10 pr-4 py-3 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-          />
-        </div>
+      {/* Sticky Search, Filter, and Custom Business Section */}
+      <div className="sticky top-0 z-40 bg-slate-50 -mx-4 px-4 py-4 mb-6 border-b border-slate-200 shadow-sm">
+        {/* Create Custom Business */}
+        <Card className="bg-gradient-to-r from-blue-50 to-indigo-50 border-2 border-dashed border-blue-300 mb-4">
+          <CardContent className="py-4 flex items-center justify-between">
+            <div>
+              <h3 className="text-lg font-semibold text-slate-900 mb-1">
+                Don't see your business idea?
+              </h3>
+              <p className="text-slate-600 text-sm">
+                Create a custom business plan tailored to your unique vision
+              </p>
+            </div>
+            <Button className="flex items-center space-x-2">
+              <Plus className="h-5 w-5" />
+              <span>Create Custom Business</span>
+            </Button>
+          </CardContent>
+        </Card>
 
-        <div className="flex flex-wrap gap-2">
-          <button
-            onClick={() => setSelectedCategory('All')}
-            className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-              selectedCategory === 'All' 
-                ? 'bg-blue-600 text-white' 
-                : 'bg-white text-slate-700 border border-slate-300 hover:bg-slate-50'
-            }`}
-          >
-            All Categories
-          </button>
-          {categories.map(category => (
-            <button
-              key={category}
-              onClick={() => setSelectedCategory(category)}
-              className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-                selectedCategory === category 
-                  ? 'bg-blue-600 text-white' 
-                  : 'bg-white text-slate-700 border border-slate-300 hover:bg-slate-50'
-              }`}
+        {/* Search and Filter */}
+        <div className="space-y-3">
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-5 w-5 text-slate-400" />
+            <input
+              type="text"
+              placeholder="Search business types..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="w-full pl-10 pr-4 py-3 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+            />
+          </div>
+
+          <div className="flex flex-wrap items-center gap-4">
+            <label className="text-sm font-medium text-slate-700">Category:</label>
+            <select
+              value={selectedCategory}
+              onChange={(e) => setSelectedCategory(e.target.value)}
+              className="px-4 py-2 border border-slate-300 rounded-lg bg-white text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500 min-w-[200px]"
             >
-              {category}
-            </button>
-          ))}
+              <option value="All">All Categories ({businessTypes?.length || 0})</option>
+              {categories.map(category => (
+                <option key={category} value={category}>
+                  {category} ({businessTypes?.filter(b => b.category === category).length || 0})
+                </option>
+              ))}
+            </select>
+            {selectedCategory !== 'All' && (
+              <button
+                onClick={() => setSelectedCategory('All')}
+                className="text-sm text-blue-600 hover:underline"
+              >
+                Clear filter
+              </button>
+            )}
+            <span className="text-sm text-slate-500 ml-auto">
+              Showing {filteredBusinesses.length} of {businessTypes?.length || 0} businesses
+            </span>
+          </div>
         </div>
       </div>
 
       {/* Business Types Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-8">
-        {filteredBusinesses.map(business => (
-          <Card key={business.id} className="hover:shadow-lg transition-shadow cursor-pointer">
-            <CardContent>
-              <div className="flex items-start justify-between mb-3">
-                <h3 className="text-lg font-semibold text-slate-900">{business.name}</h3>
-                <span className={`px-2 py-1 rounded text-xs font-medium ${difficultyColors[business.difficulty]}`}>
-                  {business.difficulty}
-                </span>
-              </div>
-              
-              <p className="text-sm text-slate-600 mb-4">{business.description}</p>
-              
-              <div className="space-y-2 mb-4">
-                <div className="flex items-center text-sm">
-                  <DollarSign className="h-4 w-4 text-slate-400 mr-2" />
-                  <span className="text-slate-600">Startup: </span>
-                  <span className="font-semibold text-slate-900 ml-1">
-                    {formatCurrency(business.startup_cost)}
-                  </span>
+        {filteredBusinesses.map(business => {
+          const breakevenMonths = business.startup_cost && business.monthly_profit 
+            ? Math.ceil(business.startup_cost / business.monthly_profit) 
+            : null
+          
+          return (
+            <Card 
+              key={business.id} 
+              className="hover:shadow-xl transition-all duration-300 cursor-pointer overflow-hidden group"
+            >
+              {/* Top Section - Image Area */}
+              <div className="relative h-36 overflow-hidden">
+                {/* Background Image with Zoom Effect */}
+                <div 
+                  className="absolute inset-0 bg-cover bg-center transition-transform duration-500 group-hover:scale-110"
+                  style={{ 
+                    backgroundImage: business.image_url 
+                      ? `url(${business.image_url})` 
+                      : 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)'
+                  }}
+                />
+                {/* Dark Gradient Overlay */}
+                <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/30 to-transparent" />
+                
+                {/* Sign up to access badge - for non-authenticated users */}
+                {!user && (
+                  <div className="absolute top-2 left-2 flex items-center space-x-1 bg-black/60 text-white text-xs px-2 py-1 rounded-full">
+                    <Lock className="h-3 w-3" />
+                    <span>Sign up to access</span>
+                  </div>
+                )}
+                
+                {/* Difficulty Badge - top right */}
+                <div className={`absolute top-2 right-2 px-2 py-1 rounded-full text-xs font-semibold ${
+                  business.difficulty === 'Easy' ? 'bg-green-500 text-white' :
+                  business.difficulty === 'Medium' ? 'bg-yellow-500 text-white' :
+                  'bg-red-500 text-white'
+                }`}>
+                  {business.difficulty === 'Easy' ? 'Beginner' : 
+                   business.difficulty === 'Medium' ? 'Intermediate' : 'Advanced'}
                 </div>
-                <div className="flex items-center text-sm">
-                  <TrendingUp className="h-4 w-4 text-green-500 mr-2" />
-                  <span className="text-slate-600">Monthly Profit: </span>
-                  <span className="font-semibold text-green-600 ml-1">
-                    {formatCurrency(business.monthly_profit)}
-                  </span>
+                
+                {/* Category Icon - bottom left */}
+                <div className="absolute bottom-2 left-2 text-2xl drop-shadow-lg">
+                  {categoryIcons[business.category] || '📦'}
                 </div>
               </div>
 
-              <div className="flex items-center justify-between pt-4 border-t border-slate-200">
-                <span className="text-xs text-slate-500">{business.category}</span>
-                <Button 
-                  size="sm"
-                  onClick={() => navigate('/onboarding', { state: { preSelectedBusiness: business } })}
-                >
-                  Start This Business
-                </Button>
-              </div>
-            </CardContent>
-          </Card>
-        ))}
+              {/* Bottom Section - Description Area */}
+              <CardContent className="p-4">
+                {/* Sub-sector Badge */}
+                <div className="flex items-center space-x-1 text-xs text-blue-600 mb-2">
+                  <Tag className="h-3 w-3" />
+                  <span className="font-medium">{business.category}</span>
+                </div>
+                
+                {/* Business Name */}
+                <h3 className="text-lg font-bold text-slate-900 mb-1">{business.name}</h3>
+                
+                {/* Main Category Label */}
+                <p className="text-xs text-slate-500 mb-2">{business.category}</p>
+                
+                {/* Description - 2 lines */}
+                <p className="text-sm text-slate-600 mb-4 line-clamp-2">{business.description}</p>
+                
+                {/* Financial Metrics */}
+                <div className="space-y-2 mb-4">
+                  <div className="flex items-center text-sm">
+                    <DollarSign className="h-4 w-4 text-blue-500 mr-2" />
+                    <span className="text-slate-600">Startup:</span>
+                    <span className="font-semibold text-slate-900 ml-auto">
+                      {formatCurrency(business.startup_cost)}
+                    </span>
+                  </div>
+                  <div className="flex items-center text-sm">
+                    <TrendingUp className="h-4 w-4 text-green-500 mr-2" />
+                    <span className="text-slate-600">Monthly Profit:</span>
+                    <span className="font-semibold text-green-600 ml-auto">
+                      {formatCurrency(business.monthly_profit)}
+                    </span>
+                  </div>
+                  {breakevenMonths && (
+                    <div className="flex items-center text-sm">
+                      <Clock className="h-4 w-4 text-orange-500 mr-2" />
+                      <span className="text-slate-600">Breakeven:</span>
+                      <span className="font-semibold text-orange-600 ml-auto">
+                        ~{breakevenMonths} months
+                      </span>
+                    </div>
+                  )}
+                </div>
+
+                {/* Action Button */}
+                {user ? (
+                  <Button 
+                    className="w-full"
+                    onClick={() => openOverview(business)}
+                  >
+                    View Details
+                  </Button>
+                ) : (
+                  <Button 
+                    className="w-full"
+                    variant="outline"
+                    onClick={() => navigate('/register')}
+                  >
+                    <Lock className="h-4 w-4 mr-2" />
+                    Sign Up to View
+                  </Button>
+                )}
+              </CardContent>
+            </Card>
+          )
+        })}
       </div>
 
-      {/* Create Custom Business */}
-      <Card className="bg-gradient-to-r from-blue-50 to-indigo-50 border-2 border-dashed border-blue-300">
-        <CardContent className="flex items-center justify-between">
-          <div>
-            <h3 className="text-lg font-semibold text-slate-900 mb-1">
-              Don't see your business idea?
-            </h3>
-            <p className="text-slate-600">
-              Create a custom business plan tailored to your unique vision
-            </p>
+      {/* Business Overview Modal */}
+      {showOverview && selectedBusiness && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
+            {/* Header */}
+            <div className="sticky top-0 bg-white border-b border-slate-200 p-6 flex items-start justify-between">
+              <div>
+                <h2 className="text-2xl font-bold text-slate-900">{selectedBusiness.name}</h2>
+                <p className="text-slate-600">{selectedBusiness.category}</p>
+              </div>
+              <button 
+                onClick={() => setShowOverview(false)}
+                className="text-slate-400 hover:text-slate-600 p-1"
+              >
+                <X className="h-6 w-6" />
+              </button>
+            </div>
+
+            {/* Content */}
+            <div className="p-6 space-y-6">
+              {/* Quick Stats */}
+              <div className="grid grid-cols-3 gap-4">
+                <div className="bg-blue-50 rounded-lg p-4 text-center">
+                  <DollarSign className="h-6 w-6 text-blue-600 mx-auto mb-1" />
+                  <p className="text-sm text-slate-600">Startup Cost</p>
+                  <p className="font-bold text-slate-900">{formatCurrency(selectedBusiness.startup_cost)}</p>
+                </div>
+                <div className="bg-green-50 rounded-lg p-4 text-center">
+                  <TrendingUp className="h-6 w-6 text-green-600 mx-auto mb-1" />
+                  <p className="text-sm text-slate-600">Monthly Profit</p>
+                  <p className="font-bold text-green-600">{formatCurrency(selectedBusiness.monthly_profit)}</p>
+                </div>
+                <div className={`rounded-lg p-4 text-center ${difficultyColors[selectedBusiness.difficulty]?.replace('text-', 'bg-').replace('700', '50')}`}>
+                  <AlertTriangle className="h-6 w-6 mx-auto mb-1" />
+                  <p className="text-sm">Difficulty</p>
+                  <p className="font-bold">{selectedBusiness.difficulty}</p>
+                </div>
+              </div>
+
+              {/* Resource Links - YouTube, Web, PDF */}
+              {(selectedBusiness.overview_video_url || selectedBusiness.overview_web_url || selectedBusiness.overview_pdf_url) && (
+                <div className="flex flex-wrap gap-3">
+                  {selectedBusiness.overview_video_url && (
+                    <a
+                      href={selectedBusiness.overview_video_url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex items-center space-x-2 px-4 py-2 bg-red-50 text-red-700 rounded-lg hover:bg-red-100 transition-colors"
+                    >
+                      <Video className="h-5 w-5" />
+                      <span className="font-medium">Watch Video</span>
+                      <ExternalLink className="h-4 w-4" />
+                    </a>
+                  )}
+                  {selectedBusiness.overview_web_url && (
+                    <a
+                      href={selectedBusiness.overview_web_url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex items-center space-x-2 px-4 py-2 bg-green-50 text-green-700 rounded-lg hover:bg-green-100 transition-colors"
+                    >
+                      <Globe className="h-5 w-5" />
+                      <span className="font-medium">Learn More</span>
+                      <ExternalLink className="h-4 w-4" />
+                    </a>
+                  )}
+                  {selectedBusiness.overview_pdf_url && (
+                    <a
+                      href={selectedBusiness.overview_pdf_url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex items-center space-x-2 px-4 py-2 bg-orange-50 text-orange-700 rounded-lg hover:bg-orange-100 transition-colors"
+                    >
+                      <Download className="h-5 w-5" />
+                      <span className="font-medium">Download PDF Guide</span>
+                      <ExternalLink className="h-4 w-4" />
+                    </a>
+                  )}
+                </div>
+              )}
+
+              {/* Database Overview Content (if available) */}
+              {selectedBusiness.overview_content ? (
+                <div className="bg-slate-50 rounded-lg p-5">
+                  <h3 className="text-lg font-semibold text-slate-900 mb-3 flex items-center">
+                    <Info className="h-5 w-5 text-blue-600 mr-2" />
+                    Business Overview
+                  </h3>
+                  <div className="prose prose-slate prose-sm max-w-none">
+                    {selectedBusiness.overview_content.split('\n').map((line, i) => {
+                      if (line.startsWith('## ')) {
+                        return <h4 key={i} className="text-md font-semibold text-slate-800 mt-4 mb-2">{line.replace('## ', '')}</h4>
+                      } else if (line.startsWith('- ')) {
+                        return <p key={i} className="flex items-start mb-1"><CheckCircle className="h-4 w-4 text-blue-500 mr-2 mt-0.5 flex-shrink-0" /><span>{line.replace('- ', '')}</span></p>
+                      } else if (line.match(/^\d+\. /)) {
+                        return <p key={i} className="flex items-start mb-1"><span className="w-5 h-5 bg-blue-100 text-blue-700 rounded-full flex items-center justify-center text-xs font-medium mr-2 flex-shrink-0">{line.match(/^\d+/)[0]}</span><span>{line.replace(/^\d+\. /, '')}</span></p>
+                      } else if (line.trim()) {
+                        return <p key={i} className="text-slate-700 mb-2">{line}</p>
+                      }
+                      return null
+                    })}
+                  </div>
+                </div>
+              ) : (
+                <>
+                  {/* Fallback: What You Need to Know */}
+                  <div>
+                    <h3 className="text-lg font-semibold text-slate-900 mb-3 flex items-center">
+                      <Info className="h-5 w-5 text-blue-600 mr-2" />
+                      What You Need to Know
+                    </h3>
+                    <ul className="space-y-2">
+                      {getBusinessOverview(selectedBusiness, formatCurrency).basics.map((item, i) => (
+                        <li key={i} className="flex items-start">
+                          <CheckCircle className="h-5 w-5 text-blue-500 mr-2 mt-0.5 flex-shrink-0" />
+                          <span className="text-slate-700">{item}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+
+                  {/* Fallback: Requirements */}
+                  <div>
+                    <h3 className="text-lg font-semibold text-slate-900 mb-3 flex items-center">
+                      <FileText className="h-5 w-5 text-orange-600 mr-2" />
+                      What You'll Need
+                    </h3>
+                    <div className="bg-orange-50 rounded-lg p-4">
+                      <ul className="space-y-2">
+                        {getBusinessOverview(selectedBusiness, formatCurrency).requirements.map((item, i) => (
+                          <li key={i} className="flex items-start">
+                            <span className="w-6 h-6 bg-orange-200 text-orange-700 rounded-full flex items-center justify-center text-sm font-medium mr-2 flex-shrink-0">
+                              {i + 1}
+                            </span>
+                            <span className="text-slate-700">{item}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  </div>
+
+                  {/* Fallback: Tips for Success */}
+                  <div>
+                    <h3 className="text-lg font-semibold text-slate-900 mb-3 flex items-center">
+                      <CheckCircle className="h-5 w-5 text-green-600 mr-2" />
+                      Tips for Success
+                    </h3>
+                    <div className="bg-green-50 rounded-lg p-4">
+                      <ul className="space-y-2">
+                        {getBusinessOverview(selectedBusiness, formatCurrency).tips.map((item, i) => (
+                          <li key={i} className="flex items-start">
+                            <span className="text-green-500 mr-2">💡</span>
+                            <span className="text-slate-700">{item}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
+
+            {/* Footer Actions */}
+            <div className="sticky bottom-0 bg-white border-t border-slate-200 p-6 flex items-center justify-between">
+              <Button 
+                variant="outline"
+                onClick={handleDownloadPDF}
+                className="flex items-center space-x-2"
+              >
+                <Download className="h-4 w-4" />
+                <span>Download Overview</span>
+              </Button>
+              <div className="flex items-center space-x-3">
+                <Button 
+                  variant="outline"
+                  onClick={() => setShowOverview(false)}
+                >
+                  Close
+                </Button>
+                <Button 
+                  onClick={() => {
+                    setShowOverview(false)
+                    navigate('/onboarding', { state: { preSelectedBusiness: selectedBusiness } })
+                  }}
+                  className="flex items-center space-x-2"
+                >
+                  <span>Start This Business</span>
+                </Button>
+              </div>
+            </div>
           </div>
-          <Button className="flex items-center space-x-2">
-            <Plus className="h-5 w-5" />
-            <span>Create Custom Business</span>
-          </Button>
-        </CardContent>
-      </Card>
+        </div>
+      )}
     </div>
   )
 }

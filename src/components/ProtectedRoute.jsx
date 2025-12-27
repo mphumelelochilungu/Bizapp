@@ -1,11 +1,12 @@
 import { Navigate, useLocation } from 'react-router-dom'
-import { useAuth } from '../hooks/useSupabase'
+import { useAuth, useProfileCompletion } from '../hooks/useSupabase'
 
-export function ProtectedRoute({ children, requireAdmin = false, skipOnboarding = false }) {
+export function ProtectedRoute({ children, requireAdmin = false, skipOnboarding = false, skipProfileCheck = false }) {
   const { data: user, isLoading } = useAuth()
+  const { data: profileData, isLoading: profileLoading } = useProfileCompletion(user?.id)
   const location = useLocation()
 
-  if (isLoading) {
+  if (isLoading || profileLoading) {
     return (
       <div className="min-h-screen flex items-center justify-center">
         <div className="text-center">
@@ -25,6 +26,15 @@ export function ProtectedRoute({ children, requireAdmin = false, skipOnboarding 
     const userRole = user.user_metadata?.role || 'user'
     if (userRole !== 'admin') {
       return <Navigate to="/dashboard" replace />
+    }
+  }
+
+  // Check if profile is completed (skip for profile page itself)
+  if (!skipProfileCheck && location.pathname !== '/profile') {
+    const isProfileCompleted = profileData?.isCompleted || false
+    if (!isProfileCompleted) {
+      // Redirect to profile with a flag indicating first-time setup
+      return <Navigate to="/profile" state={{ firstTimeSetup: true }} replace />
     }
   }
 

@@ -94,6 +94,7 @@ export function WalletPlanner() {
   const totalMonthlyIncome = income.reduce((sum, i) => {
     const amount = parseFloat(i.amount) || 0
     if (i.frequency === 'Weekly') return sum + (amount * 4)
+    if (i.frequency === 'Yearly') return sum + (amount / 12)
     if (i.frequency === 'One-time') return sum + amount
     return sum + amount // Monthly
   }, 0)
@@ -696,6 +697,7 @@ export function WalletPlanner() {
                   >
                     <option value="Monthly">Monthly</option>
                     <option value="Weekly">Weekly</option>
+                    <option value="Yearly">Yearly</option>
                     <option value="One-time">One-time</option>
                   </select>
                 </div>

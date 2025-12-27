@@ -256,6 +256,7 @@ export function Reports() {
   const getReportTitle = () => {
     switch (reportConfig.type) {
       case 'income-statement': return 'Income Statement'
+      case 'profit-loss': return 'Profit & Loss Statement'
       case 'expense-report': return 'Expense Report'
       case 'cash-flow': return 'Cash Flow Statement'
       case 'budget-analysis': return 'Budget Analysis'
@@ -344,6 +345,7 @@ export function Reports() {
                   className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
                 >
                   <option value="income-statement">Income Statement</option>
+                  <option value="profit-loss">Profit & Loss Statement (P&L)</option>
                   <option value="expense-report">Expense Report</option>
                   <option value="cash-flow">Cash Flow Statement</option>
                   <option value="budget-analysis">Budget Analysis</option>
@@ -655,6 +657,147 @@ export function Reports() {
                   </>
                 )}
 
+                {/* Profit & Loss Statement (P&L) */}
+                {reportConfig.type === 'profit-loss' && (
+                  <>
+                    {(() => {
+                      const operatingProfit = reportData.revenue - reportData.opex
+                      return (
+                        <>
+                          {/* P&L Summary */}
+                          <div className="grid grid-cols-3 gap-4 mb-6">
+                            <div className="p-4 bg-green-50 rounded-lg">
+                              <p className="text-sm text-green-600 font-medium">Revenue</p>
+                              <p className="text-2xl font-bold text-green-700">{formatCurrency(reportData.revenue)}</p>
+                            </div>
+                            <div className="p-4 bg-orange-50 rounded-lg">
+                              <p className="text-sm text-orange-600 font-medium">Operating Expenses (OPEX)</p>
+                              <p className="text-2xl font-bold text-orange-700">{formatCurrency(reportData.opex)}</p>
+                            </div>
+                            <div className={`p-4 rounded-lg ${operatingProfit >= 0 ? 'bg-blue-50' : 'bg-red-50'}`}>
+                              <p className={`text-sm font-medium ${operatingProfit >= 0 ? 'text-blue-600' : 'text-red-600'}`}>
+                                Operating {operatingProfit >= 0 ? 'Profit' : 'Loss'}
+                              </p>
+                              <p className={`text-2xl font-bold ${operatingProfit >= 0 ? 'text-blue-700' : 'text-red-700'}`}>
+                                {formatCurrency(Math.abs(operatingProfit))}
+                              </p>
+                            </div>
+                          </div>
+
+                          {/* Revenue Section */}
+                          <h2 className="text-lg font-semibold text-slate-900 mb-3 flex items-center space-x-2">
+                            <TrendingUp className="h-5 w-5 text-green-600" />
+                            <span>Revenue</span>
+                          </h2>
+                          <table className="w-full mb-6">
+                            <thead>
+                              <tr className="bg-slate-50">
+                                <th className="text-left py-2 px-3 text-sm font-semibold text-slate-700">Date</th>
+                                <th className="text-left py-2 px-3 text-sm font-semibold text-slate-700">Category</th>
+                                <th className="text-left py-2 px-3 text-sm font-semibold text-slate-700">Description</th>
+                                <th className="text-right py-2 px-3 text-sm font-semibold text-slate-700">Amount</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {reportData.revenueTransactions.length === 0 ? (
+                                <tr><td colSpan="4" className="py-4 text-center text-slate-500">No revenue transactions</td></tr>
+                              ) : (
+                                reportData.revenueTransactions.map((t, i) => (
+                                  <tr key={i} className="border-b border-slate-100">
+                                    <td className="py-2 px-3 text-sm">{formatDate(t.date)}</td>
+                                    <td className="py-2 px-3 text-sm">{t.category}</td>
+                                    <td className="py-2 px-3 text-sm text-slate-600">{t.description || '-'}</td>
+                                    <td className="py-2 px-3 text-sm text-right font-medium text-green-600">{formatCurrency(t.amount)}</td>
+                                  </tr>
+                                ))
+                              )}
+                              <tr className="bg-green-50 font-semibold">
+                                <td colSpan="3" className="py-2 px-3 text-sm">Total Revenue</td>
+                                <td className="py-2 px-3 text-sm text-right text-green-700">{formatCurrency(reportData.revenue)}</td>
+                              </tr>
+                            </tbody>
+                          </table>
+
+                          {/* Operating Expenses Section (OPEX only) */}
+                          <h2 className="text-lg font-semibold text-slate-900 mb-3 flex items-center space-x-2">
+                            <TrendingDown className="h-5 w-5 text-orange-600" />
+                            <span>Operating Expenses (OPEX)</span>
+                          </h2>
+                          <table className="w-full mb-6">
+                            <thead>
+                              <tr className="bg-slate-50">
+                                <th className="text-left py-2 px-3 text-sm font-semibold text-slate-700">Date</th>
+                                <th className="text-left py-2 px-3 text-sm font-semibold text-slate-700">Category</th>
+                                <th className="text-left py-2 px-3 text-sm font-semibold text-slate-700">Description</th>
+                                <th className="text-right py-2 px-3 text-sm font-semibold text-slate-700">Amount</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {reportData.opexTransactions.length === 0 ? (
+                                <tr><td colSpan="4" className="py-4 text-center text-slate-500">No operating expense transactions</td></tr>
+                              ) : (
+                                reportData.opexTransactions.map((t, i) => (
+                                  <tr key={i} className="border-b border-slate-100">
+                                    <td className="py-2 px-3 text-sm">{formatDate(t.date)}</td>
+                                    <td className="py-2 px-3 text-sm">{t.category}</td>
+                                    <td className="py-2 px-3 text-sm text-slate-600">{t.description || '-'}</td>
+                                    <td className="py-2 px-3 text-sm text-right font-medium text-orange-600">{formatCurrency(t.amount)}</td>
+                                  </tr>
+                                ))
+                              )}
+                              <tr className="bg-orange-50 font-semibold">
+                                <td colSpan="3" className="py-2 px-3 text-sm">Total Operating Expenses</td>
+                                <td className="py-2 px-3 text-sm text-right text-orange-700">{formatCurrency(reportData.opex)}</td>
+                              </tr>
+                            </tbody>
+                          </table>
+
+                          {/* P&L Calculation */}
+                          <div className="p-4 bg-slate-100 rounded-lg mb-4">
+                            <h3 className="font-semibold text-slate-900 mb-3">P&L Calculation</h3>
+                            <div className="space-y-2 text-sm">
+                              <div className="flex justify-between text-green-600">
+                                <span>Revenue</span>
+                                <span className="font-medium">{formatCurrency(reportData.revenue)}</span>
+                              </div>
+                              <div className="flex justify-between text-orange-600">
+                                <span>− Operating Expenses (OPEX)</span>
+                                <span className="font-medium">-{formatCurrency(reportData.opex)}</span>
+                              </div>
+                              <div className="flex justify-between pt-2 border-t border-slate-300 font-semibold">
+                                <span>Operating Profit</span>
+                                <span className={operatingProfit >= 0 ? 'text-green-700' : 'text-red-700'}>
+                                  {formatCurrency(operatingProfit)}
+                                </span>
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* Operating Profit Result */}
+                          <div className={`p-4 rounded-lg ${operatingProfit >= 0 ? 'bg-green-100' : 'bg-red-100'}`}>
+                            <div className="flex justify-between items-center">
+                              <span className="text-lg font-semibold">Operating {operatingProfit >= 0 ? 'Profit' : 'Loss'}</span>
+                              <span className={`text-2xl font-bold ${operatingProfit >= 0 ? 'text-green-700' : 'text-red-700'}`}>
+                                {formatCurrency(operatingProfit)}
+                              </span>
+                            </div>
+                            <p className="text-xs text-slate-600 mt-1">
+                              Revenue − OPEX (CAPEX not included in P&L)
+                            </p>
+                          </div>
+
+                          {/* CAPEX Note */}
+                          <div className="mt-4 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+                            <p className="text-sm text-blue-700">
+                              <strong>Note:</strong> CAPEX ({formatCurrency(reportData.capex)}) is not included in the P&L statement as it represents capital investments, not operating expenses.
+                            </p>
+                          </div>
+                        </>
+                      )
+                    })()}
+                  </>
+                )}
+
                 {/* Expense Report */}
                 {reportConfig.type === 'expense-report' && (
                   <>
@@ -735,42 +878,113 @@ export function Reports() {
                 {reportConfig.type === 'cash-flow' && (
                   <>
                     <div className="space-y-4 mb-6">
+                      {/* Operating Activities */}
                       <div className="p-4 bg-slate-50 rounded-lg">
-                        <h3 className="font-semibold text-slate-900 mb-2">Cash Inflows</h3>
+                        <h3 className="font-semibold text-slate-900 mb-2">Operating Activities</h3>
                         <div className="flex justify-between">
                           <span>Revenue from Sales</span>
                           <span className="font-medium text-green-600">+{formatCurrency(reportData.revenue)}</span>
-                        </div>
-                        <div className="flex justify-between mt-2 pt-2 border-t font-semibold">
-                          <span>Total Inflows</span>
-                          <span className="text-green-700">{formatCurrency(reportData.revenue)}</span>
-                        </div>
-                      </div>
-
-                      <div className="p-4 bg-slate-50 rounded-lg">
-                        <h3 className="font-semibold text-slate-900 mb-2">Cash Outflows</h3>
-                        <div className="flex justify-between">
-                          <span>Capital Expenditure (CAPEX)</span>
-                          <span className="font-medium text-red-600">-{formatCurrency(reportData.capex)}</span>
                         </div>
                         <div className="flex justify-between mt-1">
                           <span>Operating Expenses (OPEX)</span>
                           <span className="font-medium text-red-600">-{formatCurrency(reportData.opex)}</span>
                         </div>
                         <div className="flex justify-between mt-2 pt-2 border-t font-semibold">
-                          <span>Total Outflows</span>
-                          <span className="text-red-700">{formatCurrency(reportData.totalExpenses)}</span>
-                        </div>
-                      </div>
-
-                      <div className={`p-4 rounded-lg ${reportData.netProfit >= 0 ? 'bg-green-100' : 'bg-red-100'}`}>
-                        <div className="flex justify-between items-center">
-                          <span className="text-lg font-semibold">Net Cash Flow</span>
-                          <span className={`text-2xl font-bold ${reportData.netProfit >= 0 ? 'text-green-700' : 'text-red-700'}`}>
-                            {formatCurrency(reportData.netProfit)}
+                          <span>Operating Cash Flow</span>
+                          <span className={reportData.revenue - reportData.opex >= 0 ? 'text-green-700' : 'text-red-700'}>
+                            {formatCurrency(reportData.revenue - reportData.opex)}
                           </span>
                         </div>
                       </div>
+
+                      {/* Investing Activities */}
+                      <div className="p-4 bg-slate-50 rounded-lg">
+                        <h3 className="font-semibold text-slate-900 mb-2">Investing Activities</h3>
+                        <div className="flex justify-between">
+                          <span>Capital Expenditure (CAPEX)</span>
+                          <span className="font-medium text-red-600">-{formatCurrency(reportData.capex)}</span>
+                        </div>
+                        <div className="flex justify-between mt-2 pt-2 border-t font-semibold">
+                          <span>Investing Cash Flow</span>
+                          <span className="text-red-700">-{formatCurrency(reportData.capex)}</span>
+                        </div>
+                      </div>
+
+                      {/* Financing Activities */}
+                      <div className="p-4 bg-slate-50 rounded-lg">
+                        <h3 className="font-semibold text-slate-900 mb-2">Financing Activities</h3>
+                        <div className="flex justify-between">
+                          <span>Financing Cash In (Loans, Investments)</span>
+                          <span className="font-medium text-green-600">+{formatCurrency(0)}</span>
+                        </div>
+                        <div className="flex justify-between mt-1">
+                          <span>Financing Cash Out (Loan Repayments, Dividends)</span>
+                          <span className="font-medium text-red-600">-{formatCurrency(0)}</span>
+                        </div>
+                        <div className="flex justify-between mt-2 pt-2 border-t font-semibold">
+                          <span>Financing Cash Flow</span>
+                          <span className="text-slate-700">{formatCurrency(0)}</span>
+                        </div>
+                        <p className="text-xs text-slate-500 mt-2 italic">
+                          * Financing activities will be tracked when loans are added
+                        </p>
+                      </div>
+
+                      {/* Cash Flow Formula */}
+                      <div className="p-4 bg-slate-100 rounded-lg">
+                        <h3 className="font-semibold text-slate-900 mb-3">Cash Flow Formula</h3>
+                        <div className="space-y-2 text-sm">
+                          <div className="flex justify-between">
+                            <span className="text-slate-600">( Revenue − OPEX )</span>
+                            <span className={`font-medium ${reportData.revenue - reportData.opex >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                              {formatCurrency(reportData.revenue - reportData.opex)}
+                            </span>
+                          </div>
+                          <div className="flex justify-between text-red-600">
+                            <span>− CAPEX</span>
+                            <span className="font-medium">-{formatCurrency(reportData.capex)}</span>
+                          </div>
+                          <div className="flex justify-between text-green-600">
+                            <span>+ Financing Cash In</span>
+                            <span className="font-medium">+{formatCurrency(0)}</span>
+                          </div>
+                          <div className="flex justify-between text-red-600">
+                            <span>− Financing Cash Out</span>
+                            <span className="font-medium">-{formatCurrency(0)}</span>
+                          </div>
+                        </div>
+                      </div>
+
+                      {(() => {
+                        const financingCashIn = 0 // Will be populated when loans are tracked
+                        const financingCashOut = 0 // Will be populated when loan repayments are tracked
+                        const netCashFlow = (reportData.revenue - reportData.opex) - reportData.capex + financingCashIn - financingCashOut
+                        const startingBudget = selectedBusiness?.budget || 0
+                        const cashPosition = startingBudget - reportData.capex - reportData.opex + reportData.revenue
+                        return (
+                          <>
+                            <div className={`p-4 rounded-lg ${netCashFlow >= 0 ? 'bg-green-100' : 'bg-red-100'}`}>
+                              <div className="flex justify-between items-center">
+                                <span className="text-lg font-semibold">Net Cash Flow</span>
+                                <span className={`text-2xl font-bold ${netCashFlow >= 0 ? 'text-green-700' : 'text-red-700'}`}>
+                                  {formatCurrency(netCashFlow)}
+                                </span>
+                              </div>
+                            </div>
+                            <div className={`p-4 rounded-lg ${cashPosition >= 0 ? 'bg-blue-100' : 'bg-red-100'}`}>
+                              <div className="flex justify-between items-center">
+                                <span className="text-lg font-semibold">Cash Position</span>
+                                <span className={`text-2xl font-bold ${cashPosition >= 0 ? 'text-blue-700' : 'text-red-700'}`}>
+                                  {formatCurrency(cashPosition)}
+                                </span>
+                              </div>
+                              <p className="text-xs text-slate-600 mt-1">
+                                Starting Budget ({formatCurrency(startingBudget)}) − Expenses + Revenue
+                              </p>
+                            </div>
+                          </>
+                        )
+                      })()}
                     </div>
 
                     {/* Transaction Timeline */}
@@ -780,6 +994,7 @@ export function Reports() {
                         <tr className="bg-slate-50">
                           <th className="text-left py-2 px-3 text-sm font-semibold text-slate-700">Date</th>
                           <th className="text-left py-2 px-3 text-sm font-semibold text-slate-700">Description</th>
+                          <th className="text-left py-2 px-3 text-sm font-semibold text-slate-700">Type</th>
                           <th className="text-right py-2 px-3 text-sm font-semibold text-slate-700">Inflow</th>
                           <th className="text-right py-2 px-3 text-sm font-semibold text-slate-700">Outflow</th>
                         </tr>
@@ -789,6 +1004,15 @@ export function Reports() {
                           <tr key={i} className="border-b border-slate-100">
                             <td className="py-2 px-3 text-sm">{formatDate(t.date)}</td>
                             <td className="py-2 px-3 text-sm">{t.category} - {t.description || t.type}</td>
+                            <td className="py-2 px-3 text-sm">
+                              <span className={`px-2 py-0.5 rounded text-xs font-medium ${
+                                t.type === 'Revenue' ? 'bg-green-100 text-green-700' :
+                                t.type === 'CAPEX' ? 'bg-blue-100 text-blue-700' :
+                                'bg-orange-100 text-orange-700'
+                              }`}>
+                                {t.type}
+                              </span>
+                            </td>
                             <td className="py-2 px-3 text-sm text-right text-green-600">
                               {t.type === 'Revenue' ? formatCurrency(t.amount) : '-'}
                             </td>
@@ -798,7 +1022,69 @@ export function Reports() {
                           </tr>
                         ))}
                       </tbody>
+                      <tfoot>
+                        <tr className="bg-slate-100 font-semibold">
+                          <td colSpan="3" className="py-2 px-3 text-sm text-right">Totals:</td>
+                          <td className="py-2 px-3 text-sm text-right text-green-700">{formatCurrency(reportData.revenue)}</td>
+                          <td className="py-2 px-3 text-sm text-right text-red-700">{formatCurrency(reportData.totalExpenses)}</td>
+                        </tr>
+                        <tr className="bg-slate-50">
+                          <td colSpan="3" className="py-2 px-3 text-sm text-right text-slate-600">OPEX:</td>
+                          <td className="py-2 px-3 text-sm text-right">-</td>
+                          <td className="py-2 px-3 text-sm text-right text-orange-600">{formatCurrency(reportData.opex)}</td>
+                        </tr>
+                        <tr className="bg-slate-50">
+                          <td colSpan="3" className="py-2 px-3 text-sm text-right text-slate-600">CAPEX:</td>
+                          <td className="py-2 px-3 text-sm text-right">-</td>
+                          <td className="py-2 px-3 text-sm text-right text-blue-600">{formatCurrency(reportData.capex)}</td>
+                        </tr>
+                      </tfoot>
                     </table>
+
+                    {/* Net Cash Flow Calculation Summary */}
+                    <div className="mt-6 p-4 bg-slate-100 rounded-lg">
+                      <h3 className="font-semibold text-slate-900 mb-3">Net Cash Flow Calculation</h3>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div className="space-y-2 text-sm">
+                          <div className="flex justify-between">
+                            <span>Revenue (Inflows)</span>
+                            <span className="font-medium text-green-600">{formatCurrency(reportData.revenue)}</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span>− Operating Expenses (OPEX)</span>
+                            <span className="font-medium text-red-600">-{formatCurrency(reportData.opex)}</span>
+                          </div>
+                          <div className="flex justify-between pt-2 border-t border-slate-300">
+                            <span className="font-medium">Operating Cash Flow</span>
+                            <span className={`font-bold ${reportData.revenue - reportData.opex >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                              {formatCurrency(reportData.revenue - reportData.opex)}
+                            </span>
+                          </div>
+                        </div>
+                        <div className="space-y-2 text-sm">
+                          <div className="flex justify-between">
+                            <span>Operating Cash Flow</span>
+                            <span className={`font-medium ${reportData.revenue - reportData.opex >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                              {formatCurrency(reportData.revenue - reportData.opex)}
+                            </span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span>− Capital Expenditure (CAPEX)</span>
+                            <span className="font-medium text-red-600">-{formatCurrency(reportData.capex)}</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span>+ Financing In − Financing Out</span>
+                            <span className="font-medium text-slate-500">{formatCurrency(0)}</span>
+                          </div>
+                          <div className="flex justify-between pt-2 border-t border-slate-300">
+                            <span className="font-medium">Net Cash Flow</span>
+                            <span className={`font-bold ${(reportData.revenue - reportData.opex - reportData.capex) >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                              {formatCurrency(reportData.revenue - reportData.opex - reportData.capex)}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                      </div>
                   </>
                 )}
 

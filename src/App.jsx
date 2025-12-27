@@ -1,5 +1,6 @@
 import { BrowserRouter as Router, Routes, Route } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { CurrencyProvider } from './contexts/CurrencyContext'
 import { Layout } from './components/Layout'
 import { ProtectedRoute } from './components/ProtectedRoute'
 import { Landing } from './pages/Landing'
@@ -10,6 +11,10 @@ import { Home } from './pages/Home'
 import { MyBusiness } from './pages/MyBusiness'
 import { Finances } from './pages/Finances'
 import { Reports } from './pages/Reports'
+import { Accounting } from './pages/Accounting'
+import { AccountReports } from './pages/AccountReports'
+import { TaxSettings } from './pages/TaxSettings'
+import { TaxReports } from './pages/TaxReports'
 import { BankAccounts } from './pages/BankAccounts'
 import { LoansAndSavings } from './pages/LoansAndSavings'
 import { WalletPlanner } from './pages/WalletPlanner'
@@ -21,6 +26,8 @@ import { ManageBusinessTypes } from './pages/admin/ManageBusinessTypes'
 import { ManageCategories } from './pages/admin/ManageCategories'
 import { ManageSteps } from './pages/admin/ManageSteps'
 import { ManageLenders } from './pages/admin/ManageLenders'
+import { ManageAuthorities } from './pages/admin/ManageAuthorities'
+import { ManageSettings } from './pages/admin/ManageSettings'
 import { Onboarding } from './pages/Onboarding'
 
 const queryClient = new QueryClient()
@@ -28,6 +35,7 @@ const queryClient = new QueryClient()
 function App() {
   return (
     <QueryClientProvider client={queryClient}>
+      <CurrencyProvider>
       <Router>
         <Routes>
           {/* Public routes */}
@@ -35,9 +43,9 @@ function App() {
           <Route path="/login" element={<Login />} />
           <Route path="/register" element={<Register />} />
           
-          {/* Onboarding - protected but separate */}
+          {/* Onboarding - protected but separate, has its own profile prompt */}
           <Route path="/onboarding" element={
-            <ProtectedRoute skipOnboarding={true}>
+            <ProtectedRoute skipOnboarding={true} skipProfileCheck={true}>
               <Onboarding />
             </ProtectedRoute>
           } />
@@ -68,6 +76,26 @@ function App() {
               <Layout><Reports /></Layout>
             </ProtectedRoute>
           } />
+          <Route path="/accounting" element={
+            <ProtectedRoute>
+              <Layout><Accounting /></Layout>
+            </ProtectedRoute>
+          } />
+          <Route path="/account-reports" element={
+            <ProtectedRoute>
+              <Layout><AccountReports /></Layout>
+            </ProtectedRoute>
+          } />
+          <Route path="/tax-settings" element={
+            <ProtectedRoute>
+              <Layout><TaxSettings /></Layout>
+            </ProtectedRoute>
+          } />
+          <Route path="/tax-reports" element={
+            <ProtectedRoute>
+              <Layout><TaxReports /></Layout>
+            </ProtectedRoute>
+          } />
           <Route path="/bank-accounts" element={
             <ProtectedRoute>
               <Layout><BankAccounts /></Layout>
@@ -89,7 +117,7 @@ function App() {
             </ProtectedRoute>
           } />
           <Route path="/profile" element={
-            <ProtectedRoute>
+            <ProtectedRoute skipProfileCheck={true}>
               <Layout><Profile /></Layout>
             </ProtectedRoute>
           } />
@@ -115,6 +143,16 @@ function App() {
               <Layout><ManageLenders /></Layout>
             </ProtectedRoute>
           } />
+          <Route path="/admin/authorities" element={
+            <ProtectedRoute requireAdmin={true}>
+              <Layout><ManageAuthorities /></Layout>
+            </ProtectedRoute>
+          } />
+          <Route path="/admin/settings" element={
+            <ProtectedRoute requireAdmin={true}>
+              <Layout><ManageSettings /></Layout>
+            </ProtectedRoute>
+          } />
           <Route path="/admin/test-supabase" element={
             <ProtectedRoute requireAdmin={true}>
               <Layout><SupabaseTestPage /></Layout>
@@ -127,6 +165,7 @@ function App() {
           } />
         </Routes>
       </Router>
+      </CurrencyProvider>
     </QueryClientProvider>
   )
 }

@@ -1,11 +1,87 @@
 import { useState, useEffect } from 'react'
-import { Plus, TrendingUp, TrendingDown, DollarSign, AlertCircle, CheckCircle2, Edit, Wallet, Briefcase } from 'lucide-react'
+import { Plus, TrendingUp, TrendingDown, DollarSign, AlertCircle, CheckCircle2, Edit, Wallet, Briefcase, BookOpen, Video, X, ChevronDown, ChevronUp, Trash2, Info } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/Card'
 import { Button } from '../components/ui/Button'
 import { Input, Select } from '../components/ui/Input'
 import { formatCurrency, formatDate } from '../lib/utils'
 import { LineChart, Line, BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, ComposedChart, Area, ReferenceLine } from 'recharts'
+
+// Financial concepts content
+const FINANCIAL_CONCEPTS = [
+  {
+    id: 1,
+    title: 'Revenue / Income',
+    icon: '💰',
+    description: 'Money coming into the business.',
+    examples: ['Sales of products or services', 'Income from consulting', 'Extra income (e.g., renting out equipment)'],
+    importance: 'Track how much money is coming in to measure success and plan spending.'
+  },
+  {
+    id: 2,
+    title: 'Expenses / Costs',
+    icon: '💸',
+    description: 'Money going out to run the business. Divided into CAPEX and OPEX.',
+    subcategories: [
+      {
+        name: 'CAPEX (Capital Expenditure)',
+        definition: 'One-time investments for long-term use.',
+        examples: ['Equipment', 'Furniture', 'Machinery', 'Renovations']
+      },
+      {
+        name: 'OPEX (Operating Expenditure)',
+        definition: 'Recurring costs to keep the business running.',
+        examples: ['Rent', 'Utilities', 'Salaries/wages', 'Raw materials', 'Marketing']
+      }
+    ]
+  },
+  {
+    id: 3,
+    title: 'Budget',
+    icon: '📊',
+    description: 'Planned allocation of money to manage expenses and growth.',
+    importance: 'Helps plan how much you can spend on CAPEX and OPEX without running out of cash.',
+    tips: ['Set Total Budget → CAPEX / OPEX split', 'Monitor progress bars (green/yellow/red)', 'Get alerts when spending exceeds limits']
+  },
+  {
+    id: 4,
+    title: 'Profit / Net Profit',
+    icon: '📈',
+    description: 'Revenue minus expenses.',
+    importance: 'Shows if the business is making money or losing money. Helps plan for growth and reinvestment.',
+    tips: ['Green indicator = profit', 'Red indicator = loss', 'Track over time with charts']
+  },
+  {
+    id: 5,
+    title: 'Cash Flow',
+    icon: '🔄',
+    description: 'Money coming in vs money going out over time.',
+    formula: 'Net Cash Flow = ( Revenue − OPEX ) − CAPEX + Financing In − Financing Out',
+    importance: 'A profitable business can fail if cash is poorly managed. Net Cash Flow shows the actual cash position after all operating, investing, and financing activities.',
+    tips: ['Monitor monthly cash inflow vs outflow', 'Highlight cash shortages early', 'Operating Cash Flow = Revenue − OPEX', 'Investing Cash Flow = CAPEX (outflow)', 'Financing Cash Flow = Loans received − Loan repayments']
+  },
+  {
+    id: 6,
+    title: 'Break-even Point',
+    icon: '⚖️',
+    description: 'The point where revenue = expenses → no profit, no loss.',
+    importance: 'Helps know how much you need to sell to cover costs.'
+  },
+  {
+    id: 7,
+    title: 'Financial Reports',
+    icon: '📋',
+    description: 'Visual summaries of your business finances.',
+    examples: ['Revenue vs Expenses chart', 'CAPEX & OPEX summary', 'Monthly profit/loss', 'Transaction history']
+  },
+  {
+    id: 8,
+    title: 'Key Metrics',
+    icon: '🎯',
+    description: 'Numbers that show how healthy your business is.',
+    examples: ['Revenue growth (%)', 'Expense ratio (OPEX / Revenue)', 'Profit margin (%)', 'Budget utilization (%)']
+  }
+]
 
 const COLORS = ['#3b82f6', '#f59e0b', '#10b981', '#ef4444', '#8b5cf6']
 const CHART_COLORS = {
@@ -26,6 +102,9 @@ export function Finances() {
   const [loadingTransactions, setLoadingTransactions] = useState(false)
   const [showAddModal, setShowAddModal] = useState(false)
   const [showBudgetModal, setShowBudgetModal] = useState(false)
+  const [showConceptsModal, setShowConceptsModal] = useState(false)
+  const [expandedConcept, setExpandedConcept] = useState(null)
+  const [financeVideoUrl, setFinanceVideoUrl] = useState('')
   
   // Date range filter
   const [dateRange, setDateRange] = useState({
@@ -38,17 +117,52 @@ export function Finances() {
     opex: 5000
   })
   const [newTransaction, setNewTransaction] = useState({
-    type: 'OPEX',
+    type: 'CAPEX',
     category: '',
     amount: '',
     description: '',
     date: new Date().toISOString().split('T')[0]
   })
+  
+  // Delete transaction state
+  const [showDeleteModal, setShowDeleteModal] = useState(false)
+  const [transactionToDelete, setTransactionToDelete] = useState(null)
+  const [deleting, setDeleting] = useState(false)
+  
+  // Edit transaction state
+  const [showEditModal, setShowEditModal] = useState(false)
+  const [transactionToEdit, setTransactionToEdit] = useState(null)
+  const [editTransaction, setEditTransaction] = useState({
+    type: '',
+    category: '',
+    amount: '',
+    description: '',
+    date: ''
+  })
+  const [saving, setSaving] = useState(false)
 
-  // Fetch user's businesses
+  // Fetch user's businesses and settings
   useEffect(() => {
     fetchUserBusinesses()
+    fetchFinanceVideoUrl()
   }, [])
+
+  const fetchFinanceVideoUrl = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('app_settings')
+        .select('setting_value')
+        .eq('setting_key', 'finance_video_url')
+        .single()
+
+      if (error && error.code !== 'PGRST116') throw error
+      if (data?.setting_value) {
+        setFinanceVideoUrl(data.setting_value)
+      }
+    } catch (error) {
+      console.error('Error fetching finance video URL:', error)
+    }
+  }
 
   // Update budget when business changes
   useEffect(() => {
@@ -163,8 +277,40 @@ export function Finances() {
   const totalRevenue = transactions.filter(t => t.type === 'Revenue').reduce((sum, t) => sum + t.amount, 0)
   const totalCapex = transactions.filter(t => t.type === 'CAPEX').reduce((sum, t) => sum + t.amount, 0)
   const totalOpex = transactions.filter(t => t.type === 'OPEX').reduce((sum, t) => sum + t.amount, 0)
-  const netProfit = totalRevenue - totalCapex - totalOpex
+  const totalExpenses = totalCapex + totalOpex
+  const netProfit = totalRevenue - totalExpenses
+
+  // Key Metrics Calculations
+  const profitMargin = totalRevenue > 0 ? ((netProfit / totalRevenue) * 100) : 0
+  const expenseRatio = totalRevenue > 0 ? ((totalOpex / totalRevenue) * 100) : 0
+  const budgetUtilization = budget.total > 0 ? ((totalExpenses / budget.total) * 100) : 0
   
+  // Revenue growth (compare last 2 months)
+  const getRevenueGrowth = () => {
+    const sortedByDate = [...transactions].filter(t => t.type === 'Revenue').sort((a, b) => new Date(b.date) - new Date(a.date))
+    if (sortedByDate.length < 2) return 0
+    
+    const now = new Date()
+    const thisMonth = now.getMonth()
+    const lastMonth = thisMonth === 0 ? 11 : thisMonth - 1
+    const thisYear = now.getFullYear()
+    const lastMonthYear = thisMonth === 0 ? thisYear - 1 : thisYear
+    
+    const thisMonthRevenue = transactions.filter(t => {
+      const d = new Date(t.date)
+      return t.type === 'Revenue' && d.getMonth() === thisMonth && d.getFullYear() === thisYear
+    }).reduce((sum, t) => sum + t.amount, 0)
+    
+    const lastMonthRevenue = transactions.filter(t => {
+      const d = new Date(t.date)
+      return t.type === 'Revenue' && d.getMonth() === lastMonth && d.getFullYear() === lastMonthYear
+    }).reduce((sum, t) => sum + t.amount, 0)
+    
+    if (lastMonthRevenue === 0) return thisMonthRevenue > 0 ? 100 : 0
+    return ((thisMonthRevenue - lastMonthRevenue) / lastMonthRevenue) * 100
+  }
+  const revenueGrowth = getRevenueGrowth()
+
   // Budget calculations
   const capexUsed = totalCapex
   const opexUsed = totalOpex
@@ -257,6 +403,28 @@ export function Finances() {
 
   const monthlyChartData = generateMonthlyData()
 
+  // Break-even calculations
+  const breakEvenPoint = totalCapex + totalOpex // Total expenses to cover
+  const revenueToBreakEven = Math.max(0, breakEvenPoint - totalRevenue)
+  const isBreakEvenReached = totalRevenue >= breakEvenPoint
+  const breakEvenProgress = breakEvenPoint > 0 ? Math.min(100, (totalRevenue / breakEvenPoint) * 100) : 100
+
+  // Cash Flow data for chart
+  const cashFlowData = monthlyChartData.map(m => ({
+    ...m,
+    inflow: m.revenue,
+    outflow: m.expenses,
+    netCashFlow: m.revenue - m.expenses,
+    cumulativeCashFlow: 0 // Will be calculated below
+  }))
+  
+  // Calculate cumulative cash flow
+  let cumulative = 0
+  cashFlowData.forEach(m => {
+    cumulative += m.netCashFlow
+    m.cumulativeCashFlow = cumulative
+  })
+
   // Waterfall chart data (Revenue → Expenses → Profit)
   const waterfallData = [
     { 
@@ -321,6 +489,115 @@ export function Finances() {
     } catch (error) {
       console.error('Error adding transaction:', error)
       alert('Failed to add transaction. Please try again.')
+    }
+  }
+
+  // Open delete confirmation modal
+  const handleDeleteClick = (transaction) => {
+    setTransactionToDelete(transaction)
+    setShowDeleteModal(true)
+  }
+
+  // Confirm and delete transaction
+  const confirmDeleteTransaction = async () => {
+    if (!transactionToDelete) return
+    
+    setDeleting(true)
+    try {
+      const { error } = await supabase
+        .from('financial_records')
+        .delete()
+        .eq('id', transactionToDelete.id)
+
+      if (error) throw error
+
+      // Refresh transactions
+      await fetchTransactions(selectedBusiness.userBusinessId)
+      
+      setShowDeleteModal(false)
+      setTransactionToDelete(null)
+    } catch (error) {
+      console.error('Error deleting transaction:', error)
+      alert('Failed to delete transaction. Please try again.')
+    } finally {
+      setDeleting(false)
+    }
+  }
+
+  // Get transaction origin/source description
+  const getTransactionOrigin = (transaction) => {
+    const category = transaction.category?.toLowerCase() || ''
+    const description = transaction.description?.toLowerCase() || ''
+    
+    // Check if it's from a business step
+    const stepKeywords = ['market research', 'licenses', 'registration', 'setup location', 'marketing', 'branding', 'launch', 'operations']
+    const isFromStep = stepKeywords.some(keyword => category.includes(keyword) || description.includes(keyword))
+    
+    if (isFromStep) {
+      return {
+        source: 'Business Roadmap Step',
+        icon: '📋',
+        warning: 'This transaction was automatically created when you completed a business roadmap step. Deleting it will not undo the step completion.'
+      }
+    }
+    
+    // Check if it's a manual entry
+    return {
+      source: 'Manual Entry',
+      icon: '✏️',
+      warning: 'This transaction was manually added. Deleting it will permanently remove this record.'
+    }
+  }
+
+  // Open edit transaction modal
+  const handleEditClick = (transaction) => {
+    setTransactionToEdit(transaction)
+    setEditTransaction({
+      type: transaction.type,
+      category: transaction.category,
+      amount: transaction.amount.toString(),
+      description: transaction.description || '',
+      date: transaction.date
+    })
+    setShowEditModal(true)
+  }
+
+  // Save edited transaction
+  const saveEditedTransaction = async () => {
+    if (!transactionToEdit || !editTransaction.category || !editTransaction.amount) return
+    
+    setSaving(true)
+    try {
+      const { error } = await supabase
+        .from('financial_records')
+        .update({
+          type: editTransaction.type,
+          category: editTransaction.category,
+          amount: parseFloat(editTransaction.amount),
+          description: editTransaction.description,
+          date: editTransaction.date
+        })
+        .eq('id', transactionToEdit.id)
+
+      if (error) throw error
+
+      // Refresh transactions
+      await fetchTransactions(selectedBusiness.userBusinessId)
+      
+      setShowEditModal(false)
+      setTransactionToEdit(null)
+      setEditTransaction({
+        type: '',
+        category: '',
+        amount: '',
+        description: '',
+        date: ''
+      })
+    } catch (error) {
+      console.error('Error updating transaction:', error)
+      alert('Failed to update transaction. Please try again.')
+    } finally {
+      setSaving(false)
     }
   }
   
@@ -408,6 +685,10 @@ export function Finances() {
           </div>
         </div>
         <div className="flex items-center space-x-3">
+          <Button onClick={() => setShowConceptsModal(true)} variant="outline" className="flex items-center space-x-2">
+            <BookOpen className="h-5 w-5" />
+            <span>Financial Concepts</span>
+          </Button>
           <Button onClick={() => setShowBudgetModal(true)} variant="outline" className="flex items-center space-x-2">
             <Wallet className="h-5 w-5" />
             <span>Manage Budget</span>
@@ -660,6 +941,141 @@ export function Finances() {
           </CardContent>
         </Card>
       </div>
+
+      {/* Key Metrics */}
+      <Card className="mb-8">
+        <CardHeader>
+          <CardTitle className="flex items-center space-x-2">
+            <TrendingUp className="h-5 w-5 text-purple-600" />
+            <span>Key Performance Metrics</span>
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            {/* Revenue Growth */}
+            <div className="bg-gradient-to-br from-blue-50 to-blue-100 rounded-xl p-4">
+              <div className="text-sm text-blue-700 font-medium mb-1">Revenue Growth</div>
+              <div className={`text-2xl font-bold ${revenueGrowth >= 0 ? 'text-blue-600' : 'text-red-600'}`}>
+                {revenueGrowth >= 0 ? '+' : ''}{revenueGrowth.toFixed(1)}%
+              </div>
+              <div className="text-xs text-blue-600 mt-1">vs last month</div>
+            </div>
+
+            {/* Profit Margin */}
+            <div className="bg-gradient-to-br from-green-50 to-green-100 rounded-xl p-4">
+              <div className="text-sm text-green-700 font-medium mb-1">Profit Margin</div>
+              <div className={`text-2xl font-bold ${profitMargin >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                {profitMargin.toFixed(1)}%
+              </div>
+              <div className="text-xs text-green-600 mt-1">Net Profit / Revenue</div>
+            </div>
+
+            {/* Expense Ratio */}
+            <div className="bg-gradient-to-br from-orange-50 to-orange-100 rounded-xl p-4">
+              <div className="text-sm text-orange-700 font-medium mb-1">Expense Ratio</div>
+              <div className={`text-2xl font-bold ${expenseRatio <= 70 ? 'text-orange-600' : 'text-red-600'}`}>
+                {expenseRatio.toFixed(1)}%
+              </div>
+              <div className="text-xs text-orange-600 mt-1">OPEX / Revenue</div>
+            </div>
+
+            {/* Budget Utilization */}
+            <div className="bg-gradient-to-br from-purple-50 to-purple-100 rounded-xl p-4">
+              <div className="text-sm text-purple-700 font-medium mb-1">Budget Used</div>
+              <div className={`text-2xl font-bold ${budgetUtilization <= 100 ? 'text-purple-600' : 'text-red-600'}`}>
+                {budgetUtilization.toFixed(1)}%
+              </div>
+              <div className="text-xs text-purple-600 mt-1">of total budget</div>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Break-even Analysis */}
+      <Card className="mb-8">
+        <CardHeader>
+          <CardTitle className="flex items-center space-x-2">
+            <DollarSign className="h-5 w-5 text-indigo-600" />
+            <span>Break-even Analysis</span>
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            {/* Progress Section */}
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-sm font-medium text-slate-700">Progress to Break-even</span>
+                <span className={`text-sm font-bold ${isBreakEvenReached ? 'text-green-600' : 'text-slate-600'}`}>
+                  {breakEvenProgress.toFixed(1)}%
+                </span>
+              </div>
+              <div className="h-4 bg-slate-200 rounded-full overflow-hidden mb-4">
+                <div 
+                  className={`h-full rounded-full transition-all duration-500 ${
+                    isBreakEvenReached ? 'bg-green-500' : breakEvenProgress >= 75 ? 'bg-yellow-500' : 'bg-blue-500'
+                  }`}
+                  style={{ width: `${Math.min(100, breakEvenProgress)}%` }}
+                />
+              </div>
+              
+              <div className="space-y-2">
+                <div className="flex justify-between text-sm">
+                  <span className="text-slate-600">Total Expenses (Break-even Point)</span>
+                  <span className="font-semibold text-slate-900">{formatCurrency(breakEvenPoint)}</span>
+                </div>
+                <div className="flex justify-between text-sm">
+                  <span className="text-slate-600">Total Revenue Earned</span>
+                  <span className="font-semibold text-green-600">{formatCurrency(totalRevenue)}</span>
+                </div>
+                <div className="flex justify-between text-sm border-t pt-2">
+                  <span className="text-slate-600">Revenue Needed to Break-even</span>
+                  <span className={`font-semibold ${isBreakEvenReached ? 'text-green-600' : 'text-orange-600'}`}>
+                    {isBreakEvenReached ? 'Reached!' : formatCurrency(revenueToBreakEven)}
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            {/* Status Section */}
+            <div className={`rounded-xl p-6 ${isBreakEvenReached ? 'bg-green-50 border border-green-200' : 'bg-orange-50 border border-orange-200'}`}>
+              <div className="flex items-center space-x-3 mb-3">
+                {isBreakEvenReached ? (
+                  <CheckCircle2 className="h-8 w-8 text-green-600" />
+                ) : (
+                  <AlertCircle className="h-8 w-8 text-orange-600" />
+                )}
+                <div>
+                  <h4 className={`font-bold ${isBreakEvenReached ? 'text-green-800' : 'text-orange-800'}`}>
+                    {isBreakEvenReached ? 'Break-even Reached!' : 'Working Towards Break-even'}
+                  </h4>
+                  <p className={`text-sm ${isBreakEvenReached ? 'text-green-700' : 'text-orange-700'}`}>
+                    {isBreakEvenReached 
+                      ? `You've covered all expenses and are now profitable by ${formatCurrency(netProfit)}`
+                      : `You need ${formatCurrency(revenueToBreakEven)} more in revenue to cover all expenses`
+                    }
+                  </p>
+                </div>
+              </div>
+              
+              {!isBreakEvenReached && totalRevenue > 0 && (
+                <div className="mt-4 pt-4 border-t border-orange-200">
+                  <p className="text-sm text-orange-700">
+                    <strong>Tip:</strong> At your current revenue rate, focus on increasing sales or reducing expenses to reach break-even faster.
+                  </p>
+                </div>
+              )}
+              
+              {isBreakEvenReached && (
+                <div className="mt-4 pt-4 border-t border-green-200">
+                  <p className="text-sm text-green-700">
+                    <strong>Great job!</strong> Your business is profitable. Consider reinvesting profits for growth or building an emergency fund.
+                  </p>
+                </div>
+              )}
+            </div>
+          </div>
+        </CardContent>
+      </Card>
 
       {/* Date Range Filter */}
       <Card className="mb-6">
@@ -1040,6 +1456,146 @@ export function Finances() {
         </Card>
       </div>
 
+      {/* Cash Flow Analysis */}
+      <Card className="mb-8">
+        <CardHeader>
+          <CardTitle className="flex items-center space-x-2">
+            <TrendingUp className="h-5 w-5 text-cyan-600" />
+            <span>Cash Flow Analysis</span>
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          {/* Cash Flow Summary Cards */}
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+            <div className="bg-green-50 rounded-lg p-4 border border-green-200">
+              <div className="text-sm text-green-700 font-medium">Total Inflow</div>
+              <div className="text-xl font-bold text-green-600">{formatCurrency(totalRevenue)}</div>
+              <div className="text-xs text-green-600 mt-1">Money coming in</div>
+            </div>
+            <div className="bg-red-50 rounded-lg p-4 border border-red-200">
+              <div className="text-sm text-red-700 font-medium">Total Outflow</div>
+              <div className="text-xl font-bold text-red-600">{formatCurrency(totalExpenses)}</div>
+              <div className="text-xs text-red-600 mt-1">Money going out</div>
+            </div>
+            <div className={`rounded-lg p-4 border ${netProfit >= 0 ? 'bg-blue-50 border-blue-200' : 'bg-orange-50 border-orange-200'}`}>
+              <div className={`text-sm font-medium ${netProfit >= 0 ? 'text-blue-700' : 'text-orange-700'}`}>Net Cash Flow</div>
+              <div className={`text-xl font-bold ${netProfit >= 0 ? 'text-blue-600' : 'text-orange-600'}`}>
+                {netProfit >= 0 ? '+' : ''}{formatCurrency(netProfit)}
+              </div>
+              <div className={`text-xs mt-1 ${netProfit >= 0 ? 'text-blue-600' : 'text-orange-600'}`}>
+                {netProfit >= 0 ? 'Positive cash flow' : 'Negative cash flow'}
+              </div>
+            </div>
+            <div className={`rounded-lg p-4 border ${
+              cashFlowData.some(m => m.cumulativeCashFlow < 0) 
+                ? 'bg-red-50 border-red-200' 
+                : 'bg-green-50 border-green-200'
+            }`}>
+              <div className={`text-sm font-medium ${
+                cashFlowData.some(m => m.cumulativeCashFlow < 0) ? 'text-red-700' : 'text-green-700'
+              }`}>Cash Status</div>
+              <div className={`text-xl font-bold ${
+                cashFlowData.some(m => m.cumulativeCashFlow < 0) ? 'text-red-600' : 'text-green-600'
+              }`}>
+                {cashFlowData.some(m => m.cumulativeCashFlow < 0) ? 'Warning' : 'Healthy'}
+              </div>
+              <div className={`text-xs mt-1 ${
+                cashFlowData.some(m => m.cumulativeCashFlow < 0) ? 'text-red-600' : 'text-green-600'
+              }`}>
+                {cashFlowData.some(m => m.cumulativeCashFlow < 0) 
+                  ? 'Cash shortage detected' 
+                  : 'No cash shortages'
+                }
+              </div>
+            </div>
+          </div>
+
+          {/* Cash Flow Chart */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            {/* Inflow vs Outflow Bar Chart */}
+            <div>
+              <h4 className="text-sm font-semibold text-slate-700 mb-3">Monthly Inflow vs Outflow</h4>
+              <ResponsiveContainer width="100%" height={250}>
+                <BarChart data={cashFlowData}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+                  <XAxis dataKey="month" tick={{ fontSize: 11 }} />
+                  <YAxis tick={{ fontSize: 11 }} tickFormatter={(value) => `$${value}`} />
+                  <Tooltip 
+                    formatter={(value) => formatCurrency(value)}
+                    contentStyle={{ borderRadius: '8px', border: '1px solid #e2e8f0' }}
+                  />
+                  <Legend />
+                  <Bar dataKey="inflow" fill="#10b981" name="Inflow (Revenue)" radius={[4, 4, 0, 0]} />
+                  <Bar dataKey="outflow" fill="#ef4444" name="Outflow (Expenses)" radius={[4, 4, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+
+            {/* Cumulative Cash Flow Line Chart */}
+            <div>
+              <h4 className="text-sm font-semibold text-slate-700 mb-3">Cumulative Cash Flow</h4>
+              <ResponsiveContainer width="100%" height={250}>
+                <ComposedChart data={cashFlowData}>
+                  <defs>
+                    <linearGradient id="cashFlowGradient" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="#06b6d4" stopOpacity={0.3}/>
+                      <stop offset="95%" stopColor="#06b6d4" stopOpacity={0}/>
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+                  <XAxis dataKey="month" tick={{ fontSize: 11 }} />
+                  <YAxis tick={{ fontSize: 11 }} tickFormatter={(value) => `$${value}`} />
+                  <Tooltip 
+                    formatter={(value) => formatCurrency(value)}
+                    contentStyle={{ borderRadius: '8px', border: '1px solid #e2e8f0' }}
+                  />
+                  <ReferenceLine y={0} stroke="#94a3b8" strokeDasharray="3 3" />
+                  <Area 
+                    type="monotone" 
+                    dataKey="cumulativeCashFlow" 
+                    fill="url(#cashFlowGradient)" 
+                    stroke="#06b6d4"
+                    strokeWidth={2}
+                    name="Cumulative Cash"
+                  />
+                  <Line 
+                    type="monotone" 
+                    dataKey="cumulativeCashFlow" 
+                    stroke="#06b6d4"
+                    strokeWidth={3}
+                    dot={{ fill: '#06b6d4', strokeWidth: 2, r: 4 }}
+                    activeDot={{ r: 6, stroke: '#06b6d4', strokeWidth: 2 }}
+                    name="Cumulative Cash"
+                  />
+                </ComposedChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+
+          {/* Cash Flow Warning */}
+          {cashFlowData.some(m => m.cumulativeCashFlow < 0) && (
+            <div className="mt-4 bg-red-50 border border-red-200 rounded-lg p-4">
+              <div className="flex items-start space-x-3">
+                <AlertCircle className="h-5 w-5 text-red-600 mt-0.5" />
+                <div>
+                  <h4 className="font-semibold text-red-800">Cash Flow Warning</h4>
+                  <p className="text-sm text-red-700 mt-1">
+                    Your cumulative cash flow went negative in some months. This means expenses exceeded revenue, 
+                    which could lead to cash shortages. Consider reducing expenses or increasing revenue to maintain healthy cash flow.
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {transactions.length === 0 && (
+            <p className="text-center text-sm text-slate-500 mt-4">
+              Add transactions to see cash flow analysis
+            </p>
+          )}
+        </CardContent>
+      </Card>
+
       {/* Transactions List */}
       <Card>
         <CardHeader>
@@ -1054,23 +1610,27 @@ export function Finances() {
                   <th className="text-left py-3 px-4 text-sm font-semibold text-slate-700">Type</th>
                   <th className="text-left py-3 px-4 text-sm font-semibold text-slate-700">Category</th>
                   <th className="text-left py-3 px-4 text-sm font-semibold text-slate-700">Description</th>
+                  <th className="text-left py-3 px-4 text-sm font-semibold text-slate-700">Origin</th>
                   <th className="text-right py-3 px-4 text-sm font-semibold text-slate-700">Amount</th>
+                  <th className="text-center py-3 px-4 text-sm font-semibold text-slate-700">Actions</th>
                 </tr>
               </thead>
               <tbody>
                 {loadingTransactions ? (
                   <tr>
-                    <td colSpan="5" className="py-8 text-center text-slate-500">
+                    <td colSpan="7" className="py-8 text-center text-slate-500">
                       Loading transactions...
                     </td>
                   </tr>
                 ) : transactions.length === 0 ? (
                   <tr>
-                    <td colSpan="5" className="py-8 text-center text-slate-500">
+                    <td colSpan="7" className="py-8 text-center text-slate-500">
                       No transactions yet. Click "Add Transaction" to get started!
                     </td>
                   </tr>
-                ) : transactions.map(transaction => (
+                ) : transactions.map(transaction => {
+                  const origin = getTransactionOrigin(transaction)
+                  return (
                   <tr key={transaction.id} className="border-b border-slate-100 hover:bg-slate-50">
                     <td className="py-3 px-4 text-sm text-slate-600">{formatDate(transaction.date)}</td>
                     <td className="py-3 px-4">
@@ -1083,14 +1643,40 @@ export function Finances() {
                       </span>
                     </td>
                     <td className="py-3 px-4 text-sm text-slate-600">{transaction.category}</td>
-                    <td className="py-3 px-4 text-sm text-slate-600">{transaction.description}</td>
+                    <td className="py-3 px-4 text-sm text-slate-600 max-w-xs truncate" title={transaction.description}>
+                      {transaction.description}
+                    </td>
+                    <td className="py-3 px-4">
+                      <span className="inline-flex items-center space-x-1 text-xs text-slate-500">
+                        <span>{origin.icon}</span>
+                        <span>{origin.source}</span>
+                      </span>
+                    </td>
                     <td className={`py-3 px-4 text-sm text-right font-semibold ${
                       transaction.type === 'Revenue' ? 'text-green-600' : 'text-red-600'
                     }`}>
                       {transaction.type === 'Revenue' ? '+' : '-'}{formatCurrency(transaction.amount)}
                     </td>
+                    <td className="py-3 px-4 text-center">
+                      <div className="flex items-center justify-center space-x-1">
+                        <button
+                          onClick={() => handleEditClick(transaction)}
+                          className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded transition-colors"
+                          title="Edit transaction"
+                        >
+                          <Edit className="h-4 w-4" />
+                        </button>
+                        <button
+                          onClick={() => handleDeleteClick(transaction)}
+                          className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded transition-colors"
+                          title="Delete transaction"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </button>
+                      </div>
+                    </td>
                   </tr>
-                ))}
+                )})}
               </tbody>
             </table>
           </div>
@@ -1191,9 +1777,9 @@ export function Finances() {
                   value={newTransaction.type}
                   onChange={(e) => setNewTransaction({...newTransaction, type: e.target.value})}
                 >
-                  <option value="OPEX">OPEX (Operating Expense)</option>
                   <option value="CAPEX">CAPEX (Capital Expense)</option>
-                  <option value="Revenue">Revenue</option>
+                  <option value="OPEX">OPEX (Operating Expense)</option>
+                  <option value="Revenue">Revenue/Income</option>
                 </Select>
 
                 <Input
@@ -1231,6 +1817,374 @@ export function Finances() {
                   </Button>
                   <Button onClick={() => setShowAddModal(false)} variant="secondary" className="flex-1">
                     Cancel
+                  </Button>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      )}
+
+      {/* Financial Concepts Modal */}
+      {showConceptsModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-3xl max-h-[90vh] overflow-hidden flex flex-col">
+            {/* Modal Header */}
+            <div className="bg-gradient-to-r from-blue-600 to-indigo-600 px-6 py-4 flex items-center justify-between">
+              <div className="flex items-center space-x-3">
+                <BookOpen className="h-7 w-7 text-white" />
+                <h2 className="text-xl font-bold text-white">Basic Financial Concepts</h2>
+              </div>
+              <button
+                onClick={() => setShowConceptsModal(false)}
+                className="text-white/80 hover:text-white transition-colors"
+              >
+                <X className="h-6 w-6" />
+              </button>
+            </div>
+
+            {/* Video Link Section */}
+            {financeVideoUrl && (
+              <div className="bg-blue-50 border-b border-blue-200 px-6 py-3">
+                <a
+                  href={financeVideoUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-center space-x-2 text-blue-700 hover:text-blue-800 font-medium"
+                >
+                  <Video className="h-5 w-5" />
+                  <span>Watch Video Tutorial on Financial Basics</span>
+                </a>
+              </div>
+            )}
+
+            {/* Modal Body */}
+            <div className="flex-1 overflow-y-auto p-6">
+              <p className="text-slate-600 mb-6">
+                Understanding these basic concepts will help you manage your business finances effectively.
+              </p>
+
+              <div className="space-y-3">
+                {FINANCIAL_CONCEPTS.map((concept) => (
+                  <div
+                    key={concept.id}
+                    className="border border-slate-200 rounded-lg overflow-hidden"
+                  >
+                    {/* Concept Header */}
+                    <button
+                      onClick={() => setExpandedConcept(expandedConcept === concept.id ? null : concept.id)}
+                      className="w-full px-4 py-3 flex items-center justify-between bg-slate-50 hover:bg-slate-100 transition-colors"
+                    >
+                      <div className="flex items-center space-x-3">
+                        <span className="text-2xl">{concept.icon}</span>
+                        <span className="font-semibold text-slate-900">{concept.title}</span>
+                      </div>
+                      {expandedConcept === concept.id ? (
+                        <ChevronUp className="h-5 w-5 text-slate-500" />
+                      ) : (
+                        <ChevronDown className="h-5 w-5 text-slate-500" />
+                      )}
+                    </button>
+
+                    {/* Concept Details */}
+                    {expandedConcept === concept.id && (
+                      <div className="px-4 py-4 bg-white border-t border-slate-200">
+                        <p className="text-slate-700 mb-3">{concept.description}</p>
+
+                        {concept.importance && (
+                          <div className="mb-3">
+                            <span className="text-sm font-medium text-blue-700">Why it matters: </span>
+                            <span className="text-sm text-slate-600">{concept.importance}</span>
+                          </div>
+                        )}
+
+                        {concept.formula && (
+                          <div className="mb-3 bg-blue-50 border border-blue-200 rounded-lg p-3">
+                            <span className="text-sm font-medium text-blue-800">Formula: </span>
+                            <code className="text-sm text-blue-700 font-mono">{concept.formula}</code>
+                          </div>
+                        )}
+
+                        {concept.examples && (
+                          <div className="mb-3">
+                            <p className="text-sm font-medium text-slate-700 mb-1">Examples:</p>
+                            <ul className="list-disc list-inside text-sm text-slate-600 space-y-1">
+                              {concept.examples.map((ex, i) => (
+                                <li key={i}>{ex}</li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
+
+                        {concept.subcategories && (
+                          <div className="space-y-3">
+                            {concept.subcategories.map((sub, i) => (
+                              <div key={i} className="bg-slate-50 rounded-lg p-3">
+                                <p className="font-medium text-slate-800">{sub.name}</p>
+                                <p className="text-sm text-slate-600 mb-2">{sub.definition}</p>
+                                <ul className="list-disc list-inside text-sm text-slate-500">
+                                  {sub.examples.map((ex, j) => (
+                                    <li key={j}>{ex}</li>
+                                  ))}
+                                </ul>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+
+                        {concept.tips && (
+                          <div>
+                            <p className="text-sm font-medium text-green-700 mb-1">Tips:</p>
+                            <ul className="list-disc list-inside text-sm text-slate-600 space-y-1">
+                              {concept.tips.map((tip, i) => (
+                                <li key={i}>{tip}</li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+
+              {/* Summary */}
+              <div className="mt-6 bg-green-50 border border-green-200 rounded-lg p-4">
+                <h4 className="font-semibold text-green-800 mb-2">Summary</h4>
+                <p className="text-sm text-green-700">
+                  For a beginner-friendly approach, focus on: <strong>Revenue</strong> (what's coming in), 
+                  <strong> Expenses</strong> (CAPEX & OPEX - what's going out), <strong>Budget</strong> (plan for spending), 
+                  <strong> Profit</strong> (is the business making money?), and <strong>Cash Flow</strong> (manage timing of money).
+                </p>
+              </div>
+            </div>
+
+            {/* Modal Footer */}
+            <div className="border-t border-slate-200 px-6 py-4 bg-slate-50">
+              <Button onClick={() => setShowConceptsModal(false)} className="w-full">
+                Got it!
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Transaction Confirmation Modal */}
+      {showDeleteModal && transactionToDelete && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <Card className="w-full max-w-md">
+            <CardHeader className="pb-2">
+              <CardTitle className="flex items-center space-x-2 text-red-600">
+                <Trash2 className="h-5 w-5" />
+                <span>Delete Transaction</span>
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              {/* Transaction Details */}
+              <div className="bg-slate-50 border border-slate-200 rounded-lg p-4 mb-4">
+                <h4 className="text-sm font-semibold text-slate-700 mb-2">Transaction Details</h4>
+                <div className="space-y-2 text-sm">
+                  <div className="flex justify-between">
+                    <span className="text-slate-500">Date:</span>
+                    <span className="font-medium">{formatDate(transactionToDelete.date)}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-500">Type:</span>
+                    <span className={`px-2 py-0.5 rounded text-xs font-medium ${
+                      transactionToDelete.type === 'Revenue' ? 'bg-green-100 text-green-700' :
+                      transactionToDelete.type === 'CAPEX' ? 'bg-blue-100 text-blue-700' :
+                      'bg-orange-100 text-orange-700'
+                    }`}>
+                      {transactionToDelete.type}
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-500">Category:</span>
+                    <span className="font-medium">{transactionToDelete.category}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-500">Amount:</span>
+                    <span className={`font-semibold ${
+                      transactionToDelete.type === 'Revenue' ? 'text-green-600' : 'text-red-600'
+                    }`}>
+                      {transactionToDelete.type === 'Revenue' ? '+' : '-'}{formatCurrency(transactionToDelete.amount)}
+                    </span>
+                  </div>
+                  {transactionToDelete.description && (
+                    <div className="pt-2 border-t border-slate-200">
+                      <span className="text-slate-500">Description:</span>
+                      <p className="text-slate-700 mt-1">{transactionToDelete.description}</p>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Origin Info */}
+              {(() => {
+                const origin = getTransactionOrigin(transactionToDelete)
+                return (
+                  <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 mb-4">
+                    <div className="flex items-start space-x-2">
+                      <Info className="h-5 w-5 text-blue-600 flex-shrink-0 mt-0.5" />
+                      <div>
+                        <p className="text-sm font-medium text-blue-900">
+                          Origin: {origin.icon} {origin.source}
+                        </p>
+                        <p className="text-xs text-blue-700 mt-1">{origin.warning}</p>
+                      </div>
+                    </div>
+                  </div>
+                )
+              })()}
+
+              {/* Warning */}
+              <div className="bg-red-50 border border-red-200 rounded-lg p-3 mb-4">
+                <div className="flex items-start space-x-2">
+                  <AlertCircle className="h-5 w-5 text-red-600 flex-shrink-0 mt-0.5" />
+                  <div>
+                    <p className="text-sm font-medium text-red-900">Warning</p>
+                    <p className="text-xs text-red-700 mt-1">
+                      This action cannot be undone. The transaction will be permanently removed from your financial records.
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Actions */}
+              <div className="flex space-x-3">
+                <Button
+                  variant="outline"
+                  className="flex-1"
+                  onClick={() => {
+                    setShowDeleteModal(false)
+                    setTransactionToDelete(null)
+                  }}
+                  disabled={deleting}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  className="flex-1 bg-red-600 hover:bg-red-700 text-white"
+                  onClick={confirmDeleteTransaction}
+                  disabled={deleting}
+                >
+                  {deleting ? 'Deleting...' : 'Delete Transaction'}
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      )}
+
+      {/* Edit Transaction Modal */}
+      {showEditModal && transactionToEdit && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <Card className="w-full max-w-md">
+            <CardHeader className="pb-2">
+              <CardTitle className="flex items-center space-x-2">
+                <Edit className="h-5 w-5 text-blue-600" />
+                <span>Edit Transaction</span>
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-4">
+                {/* Transaction Type */}
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">Type</label>
+                  <select
+                    value={editTransaction.type}
+                    onChange={(e) => setEditTransaction({ ...editTransaction, type: e.target.value })}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  >
+                    <option value="CAPEX">CAPEX (Capital Expenditure)</option>
+                    <option value="OPEX">OPEX (Operating Expenditure)</option>
+                    <option value="Revenue">Revenue</option>
+                  </select>
+                </div>
+
+                {/* Category */}
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">Category</label>
+                  <input
+                    type="text"
+                    value={editTransaction.category}
+                    onChange={(e) => setEditTransaction({ ...editTransaction, category: e.target.value })}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    placeholder="e.g., Equipment, Rent, Sales"
+                  />
+                </div>
+
+                {/* Amount */}
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">Amount</label>
+                  <input
+                    type="number"
+                    value={editTransaction.amount}
+                    onChange={(e) => setEditTransaction({ ...editTransaction, amount: e.target.value })}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    placeholder="0.00"
+                    min="0"
+                    step="0.01"
+                  />
+                </div>
+
+                {/* Description */}
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">Description</label>
+                  <input
+                    type="text"
+                    value={editTransaction.description}
+                    onChange={(e) => setEditTransaction({ ...editTransaction, description: e.target.value })}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    placeholder="Optional description"
+                  />
+                </div>
+
+                {/* Date */}
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">Date</label>
+                  <input
+                    type="date"
+                    value={editTransaction.date}
+                    onChange={(e) => setEditTransaction({ ...editTransaction, date: e.target.value })}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+
+                {/* Origin Info */}
+                {(() => {
+                  const origin = getTransactionOrigin(transactionToEdit)
+                  return (
+                    <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
+                      <div className="flex items-start space-x-2">
+                        <Info className="h-4 w-4 text-blue-600 flex-shrink-0 mt-0.5" />
+                        <p className="text-xs text-blue-700">
+                          Origin: {origin.icon} {origin.source}
+                        </p>
+                      </div>
+                    </div>
+                  )
+                })()}
+
+                {/* Actions */}
+                <div className="flex space-x-3 pt-2">
+                  <Button
+                    variant="outline"
+                    className="flex-1"
+                    onClick={() => {
+                      setShowEditModal(false)
+                      setTransactionToEdit(null)
+                    }}
+                    disabled={saving}
+                  >
+                    Cancel
+                  </Button>
+                  <Button
+                    className="flex-1"
+                    onClick={saveEditedTransaction}
+                    disabled={saving || !editTransaction.category || !editTransaction.amount}
+                  >
+                    {saving ? 'Saving...' : 'Save Changes'}
                   </Button>
                 </div>
               </div>

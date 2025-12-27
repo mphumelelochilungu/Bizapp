@@ -5,11 +5,11 @@ import { Button } from '../components/ui/Button'
 import { Input, Select } from '../components/ui/Input'
 import { 
   Rocket, Briefcase, ChevronRight, ChevronLeft, DollarSign, 
-  Calendar, Target, Check, X, Search, AlertCircle, Wallet, TrendingUp, CheckCircle2, Info
+  Calendar, Target, Check, X, Search, AlertCircle, Wallet, TrendingUp, CheckCircle2, Info, User
 } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { supabase } from '../lib/supabase'
-import { useAuth } from '../hooks/useSupabase'
+import { useAuth, useProfileCompletion } from '../hooks/useSupabase'
 import { useBusinessTypes } from '../hooks/useSupabase'
 import { formatCurrency } from '../lib/utils'
 
@@ -43,14 +43,14 @@ const ROADMAP_STEPS = [
     why: 'Creates the foundation where your business operates'
   },
   {
-    title: 'Buy Equipment or Stock',
-    description: 'Purchase necessary equipment, tools, inventory, or initial stock. This is your main CAPEX investment to get operational.',
-    why: 'Gives you the tools and products needed to serve customers'
+    title: 'Marketing & Branding',
+    description: 'Create your brand identity, set up social media, design marketing materials, and plan your launch strategy to attract customers.',
+    why: 'Builds awareness and attracts your first customers'
   },
   {
-    title: 'Start Operations',
-    description: 'Begin selling products or services, track revenue, manage expenses, and serve customers. Your business is now live!',
-    why: 'This is where you start making money and growing'
+    title: 'Launch & Operations',
+    description: 'Purchase equipment/stock, hire staff if needed, set up systems, and start serving customers. Track sales, manage inventory, handle finances, and grow your business.',
+    why: 'This is where you invest, operate, and start making money'
   }
 ]
 
@@ -59,6 +59,7 @@ export function Onboarding() {
   const location = useLocation()
   const { data: user } = useAuth()
   const { data: businessTypes } = useBusinessTypes()
+  const { data: profileData, isLoading: profileLoading } = useProfileCompletion(user?.id)
   
   const preSelectedBusiness = location.state?.preSelectedBusiness
   
@@ -75,6 +76,29 @@ export function Onboarding() {
     expectedMonthlyProfit: ''
   })
   const [saving, setSaving] = useState(false)
+  const [showCancelConfirm, setShowCancelConfirm] = useState(false)
+  const [showBudgetWarning, setShowBudgetWarning] = useState(false)
+  const [showProfilePrompt, setShowProfilePrompt] = useState(false)
+
+  // Check if profile is incomplete and show prompt
+  useEffect(() => {
+    if (!profileLoading && profileData && !profileData.isCompleted) {
+      setShowProfilePrompt(true)
+    }
+  }, [profileData, profileLoading])
+
+  // Handle cancel onboarding
+  const handleCancel = () => {
+    setShowCancelConfirm(true)
+  }
+
+  const confirmCancel = () => {
+    navigate('/home')
+  }
+
+  const goToProfile = () => {
+    navigate('/profile', { state: { fromOnboarding: true } })
+  }
 
   // Auto-fill if business was pre-selected from Home page
   useEffect(() => {
@@ -176,12 +200,26 @@ export function Onboarding() {
     switch (currentStep) {
       case 1: return formData.selectedBusiness !== null
       case 2: return formData.businessName.trim() !== ''
-      case 3: return formData.totalBudget && formData.capexBudget && formData.opexBudget && isBudgetValid
+      case 3: return formData.totalBudget && formData.capexBudget && formData.opexBudget // Allow proceeding even if budget exceeds
       case 4: return formData.startDate !== ''
       case 5: return formData.expectedMonthlyProfit !== ''
       case 6: return true
       default: return false
     }
+  }
+
+  // Handle next step with budget warning check
+  const handleNextStep = () => {
+    if (currentStep === 3 && !isBudgetValid) {
+      setShowBudgetWarning(true)
+    } else {
+      nextStep()
+    }
+  }
+
+  const confirmBudgetExceed = () => {
+    setShowBudgetWarning(false)
+    nextStep()
   }
 
   const difficultyColors = {
@@ -370,14 +408,17 @@ export function Onboarding() {
 
                       {/* Validation Warning */}
                       {!isBudgetValid && formData.totalBudget && formData.capexBudget && formData.opexBudget && (
-                        <div className="mt-3 bg-red-50 border border-red-200 rounded-lg p-3 flex items-start space-x-2">
-                          <AlertCircle className="h-5 w-5 text-red-600 flex-shrink-0 mt-0.5" />
+                        <div className="mt-3 bg-orange-50 border border-orange-200 rounded-lg p-3 flex items-start space-x-2">
+                          <AlertCircle className="h-5 w-5 text-orange-600 flex-shrink-0 mt-0.5" />
                           <div className="flex-1">
-                            <p className="text-sm text-red-800">
-                              <strong>Budget Error:</strong> CAPEX ({formatCurrency(parseFloat(formData.capexBudget))}) + OPEX ({formatCurrency(parseFloat(formData.opexBudget))}) = {formatCurrency(budgetTotal)}
+                            <p className="text-sm text-orange-800">
+                              <strong>Budget Warning:</strong> CAPEX ({formatCurrency(parseFloat(formData.capexBudget))}) + OPEX ({formatCurrency(parseFloat(formData.opexBudget))}) = {formatCurrency(budgetTotal)}
                             </p>
-                            <p className="text-sm text-red-800 mt-1">
-                              This exceeds your Total Budget of {formatCurrency(parseFloat(formData.totalBudget))}. Please adjust your allocations.
+                            <p className="text-sm text-orange-800 mt-1">
+                              This exceeds your Total Budget of {formatCurrency(parseFloat(formData.totalBudget))} by {formatCurrency(budgetTotal - parseFloat(formData.totalBudget))}.
+                            </p>
+                            <p className="text-xs text-orange-700 mt-2">
+                              You can still continue, but you'll be asked to confirm this allocation.
                             </p>
                           </div>
                         </div>
@@ -597,19 +638,31 @@ export function Onboarding() {
 
                 {/* Navigation Buttons */}
                 <div className="flex items-center justify-between mt-8 pt-6 border-t border-slate-200">
-                  <Button
-                    onClick={prevStep}
-                    variant="outline"
-                    disabled={currentStep === 1}
-                    className="flex items-center space-x-2"
-                  >
-                    <ChevronLeft className="h-4 w-4" />
-                    <span>Back</span>
-                  </Button>
+                  <div className="flex items-center space-x-3">
+                    <Button
+                      onClick={handleCancel}
+                      variant="outline"
+                      className="flex items-center space-x-2 text-red-600 border-red-300 hover:bg-red-50"
+                    >
+                      <X className="h-4 w-4" />
+                      <span>Cancel</span>
+                    </Button>
+                    
+                    {currentStep > 1 && (
+                      <Button
+                        onClick={prevStep}
+                        variant="outline"
+                        className="flex items-center space-x-2"
+                      >
+                        <ChevronLeft className="h-4 w-4" />
+                        <span>Back</span>
+                      </Button>
+                    )}
+                  </div>
 
                   {currentStep < 6 ? (
                     <Button
-                      onClick={nextStep}
+                      onClick={handleNextStep}
                       disabled={!canProceed()}
                       className="flex items-center space-x-2"
                     >
@@ -632,6 +685,150 @@ export function Onboarding() {
           </motion.div>
         </AnimatePresence>
       </div>
+
+      {/* Cancel Confirmation Modal */}
+      {showCancelConfirm && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-xl max-w-md w-full p-6">
+            <div className="text-center">
+              <div className="w-12 h-12 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                <AlertCircle className="h-6 w-6 text-red-600" />
+              </div>
+              <h3 className="text-lg font-semibold text-slate-900 mb-2">
+                Cancel Business Setup?
+              </h3>
+              <p className="text-slate-600 mb-6">
+                Are you sure you want to cancel? Your progress will not be saved.
+              </p>
+              <div className="flex space-x-3">
+                <Button
+                  variant="outline"
+                  className="flex-1"
+                  onClick={() => setShowCancelConfirm(false)}
+                >
+                  Continue Setup
+                </Button>
+                <Button
+                  className="flex-1 bg-red-600 hover:bg-red-700"
+                  onClick={confirmCancel}
+                >
+                  Yes, Cancel
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Budget Exceed Warning Modal */}
+      {showBudgetWarning && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-xl max-w-lg w-full p-6">
+            <div className="text-center">
+              <div className="w-14 h-14 bg-orange-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                <AlertCircle className="h-8 w-8 text-orange-600" />
+              </div>
+              <h3 className="text-xl font-bold text-slate-900 mb-2">
+                Budget Allocation Warning
+              </h3>
+              <div className="bg-orange-50 border border-orange-200 rounded-lg p-4 mb-4 text-left">
+                <p className="text-sm text-orange-800 mb-3">
+                  Your <strong>CAPEX + OPEX</strong> ({formatCurrency(budgetTotal)}) exceeds your <strong>Total Budget</strong> ({formatCurrency(parseFloat(formData.totalBudget || 0))}) by <strong className="text-red-600">{formatCurrency(budgetTotal - parseFloat(formData.totalBudget || 0))}</strong>.
+                </p>
+                <div className="space-y-2 text-sm text-slate-700">
+                  <p className="font-semibold">Why this matters:</p>
+                  <ul className="list-disc list-inside space-y-1 text-slate-600">
+                    <li>You may run out of money before completing your business setup</li>
+                    <li>You might need to seek additional funding or loans</li>
+                    <li>Cash flow problems could delay your business launch</li>
+                    <li>Unexpected expenses won't have a buffer</li>
+                  </ul>
+                </div>
+              </div>
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 mb-6 text-left">
+                <p className="text-sm text-blue-800">
+                  <strong>💡 Tip:</strong> It's recommended to keep CAPEX + OPEX within your total budget, and ideally leave 10-20% as a buffer for unexpected costs.
+                </p>
+              </div>
+              <p className="text-slate-600 mb-6">
+                Are you sure you want to continue with this budget allocation?
+              </p>
+              <div className="flex space-x-3">
+                <Button
+                  variant="outline"
+                  className="flex-1"
+                  onClick={() => setShowBudgetWarning(false)}
+                >
+                  Go Back & Adjust
+                </Button>
+                <Button
+                  className="flex-1 bg-orange-600 hover:bg-orange-700"
+                  onClick={confirmBudgetExceed}
+                >
+                  Yes, Continue Anyway
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Profile Incomplete Prompt Modal */}
+      {showProfilePrompt && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-xl max-w-md w-full p-6">
+            <div className="text-center">
+              <div className="w-16 h-16 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                <User className="h-8 w-8 text-blue-600" />
+              </div>
+              <h3 className="text-xl font-bold text-slate-900 mb-2">
+                Complete Your Profile First
+              </h3>
+              <p className="text-slate-600 mb-4">
+                Before starting a business, please complete your profile. This helps us:
+              </p>
+              <div className="bg-slate-50 rounded-lg p-4 mb-6 text-left">
+                <ul className="space-y-2 text-sm text-slate-700">
+                  <li className="flex items-start space-x-2">
+                    <Check className="h-4 w-4 text-green-600 mt-0.5 flex-shrink-0" />
+                    <span>Set the correct currency for your region</span>
+                  </li>
+                  <li className="flex items-start space-x-2">
+                    <Check className="h-4 w-4 text-green-600 mt-0.5 flex-shrink-0" />
+                    <span>Personalize your business experience</span>
+                  </li>
+                  <li className="flex items-start space-x-2">
+                    <Check className="h-4 w-4 text-green-600 mt-0.5 flex-shrink-0" />
+                    <span>Show relevant local regulations and lenders</span>
+                  </li>
+                  <li className="flex items-start space-x-2">
+                    <Check className="h-4 w-4 text-green-600 mt-0.5 flex-shrink-0" />
+                    <span>Keep your business records organized</span>
+                  </li>
+                </ul>
+              </div>
+              <p className="text-sm text-slate-500 mb-4">
+                It only takes a minute!
+              </p>
+              <div className="flex space-x-3">
+                <Button
+                  variant="outline"
+                  className="flex-1"
+                  onClick={() => setShowProfilePrompt(false)}
+                >
+                  Skip for Now
+                </Button>
+                <Button
+                  className="flex-1 bg-blue-600 hover:bg-blue-700"
+                  onClick={goToProfile}
+                >
+                  Complete Profile
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

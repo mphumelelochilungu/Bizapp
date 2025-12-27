@@ -1,11 +1,12 @@
 import { useState, useEffect } from 'react'
 import { useLocation } from 'react-router-dom'
-import { CheckCircle2, Circle, DollarSign, TrendingUp, MessageSquare, Send, Video, FileText, ChevronDown, Briefcase, Trash2, AlertTriangle } from 'lucide-react'
+import { CheckCircle2, Circle, DollarSign, TrendingUp, MessageSquare, Send, Video, FileText, ChevronDown, Briefcase, Trash2, AlertTriangle, Building2, ExternalLink, Edit2, Check, X } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/Card'
 import { Button } from '../components/ui/Button'
 import { formatCurrency } from '../lib/utils'
 import { motion } from 'framer-motion'
+import { useCountryAuthority, useUserProfile } from '../hooks/useSupabase'
 
 const sampleSteps = [
   { 
@@ -14,44 +15,53 @@ const sampleSteps = [
     description: 'Understand your target market and competitors',
     videoUrl: 'https://example.com/video1',
     estimatedCost: 100,
-    completed: true,
+    completed: false,
     checklist: ['Identify target customers', 'Analyze competitors', 'Survey potential customers']
   },
   { 
     id: 2, 
-    title: 'Business Registration', 
-    description: 'Register your business legally',
+    title: 'Licenses & Registration', 
+    description: 'Register your business legally and get permits',
     videoUrl: 'https://example.com/video2',
     estimatedCost: 200,
-    completed: true,
-    checklist: ['Choose business structure', 'Register with authorities', 'Get tax ID']
+    completed: false,
+    checklist: ['Choose business structure', 'Register with authorities', 'Get tax ID', 'Obtain necessary permits']
   },
   { 
     id: 3, 
-    title: 'Location & Setup', 
+    title: 'Setup Location', 
     description: 'Find and prepare your business location',
     videoUrl: 'https://example.com/video3',
     estimatedCost: 2000,
     completed: false,
-    checklist: ['Scout locations', 'Negotiate lease', 'Setup workspace']
+    checklist: ['Scout locations', 'Negotiate lease', 'Setup workspace', 'Install utilities']
   },
   { 
     id: 4, 
-    title: 'Equipment Purchase', 
-    description: 'Buy necessary equipment and supplies',
+    title: 'Marketing & Branding', 
+    description: 'Create brand identity and marketing strategy',
     videoUrl: 'https://example.com/video4',
-    estimatedCost: 3000,
+    estimatedCost: 500,
     completed: false,
-    checklist: ['List required equipment', 'Compare suppliers', 'Purchase items']
+    checklist: ['Design logo & branding', 'Create social media accounts', 'Design marketing materials', 'Plan launch campaign']
   },
   { 
     id: 5, 
-    title: 'Marketing Launch', 
-    description: 'Create and execute marketing strategy',
+    title: 'Launch & Operations', 
+    description: 'Buy equipment, start operations, and serve customers',
     videoUrl: 'https://example.com/video5',
-    estimatedCost: 500,
+    estimatedCost: 3000,
     completed: false,
-    checklist: ['Design logo', 'Create social media', 'Launch campaign']
+    checklist: [
+      'List required equipment/stock', 
+      'Compare suppliers & purchase', 
+      'Hire staff if needed', 
+      'Set up POS/payment systems', 
+      'Open for business', 
+      'Track daily sales', 
+      'Manage inventory', 
+      'Handle customer service'
+    ]
   },
 ]
 
@@ -61,6 +71,11 @@ export function MyBusiness() {
   const [selectedBusinessId, setSelectedBusinessId] = useState(null)
   const [selectedBusiness, setSelectedBusiness] = useState(null)
   const [loading, setLoading] = useState(true)
+  const [currentUserId, setCurrentUserId] = useState(null)
+  
+  // Fetch user profile and country authority
+  const { data: userProfile } = useUserProfile(currentUserId)
+  const { data: countryAuthority } = useCountryAuthority(userProfile?.country_code)
   
   const [steps, setSteps] = useState(sampleSteps)
   const [selectedStep, setSelectedStep] = useState(steps[0])
@@ -80,6 +95,11 @@ export function MyBusiness() {
   const [stepChecklist, setStepChecklist] = useState([])
   const [stepActualCost, setStepActualCost] = useState('')
   const [stepExpenseType, setStepExpenseType] = useState('CAPEX')
+  
+  // Expected profit edit state
+  const [editingProfit, setEditingProfit] = useState(false)
+  const [expectedProfitValue, setExpectedProfitValue] = useState('')
+  const [savingProfit, setSavingProfit] = useState(false)
 
   // Fetch user's businesses
   useEffect(() => {
@@ -93,10 +113,56 @@ export function MyBusiness() {
     }
   }, [location.state])
 
+  // Fetch step progress when selected business changes
+  useEffect(() => {
+    if (selectedBusiness?.userBusinessId) {
+      fetchStepProgress(selectedBusiness.userBusinessId)
+    }
+  }, [selectedBusiness?.userBusinessId])
+
+  // Fetch step progress from database
+  const fetchStepProgress = async (userBusinessId) => {
+    try {
+      const { data, error } = await supabase
+        .from('step_progress')
+        .select('*')
+        .eq('user_business_id', userBusinessId)
+      
+      if (error) throw error
+
+      // Merge saved progress with sample steps
+      if (data && data.length > 0) {
+        const updatedSteps = sampleSteps.map(step => {
+          const savedProgress = data.find(p => p.step_number === step.id)
+          if (savedProgress) {
+            return {
+              ...step,
+              completed: savedProgress.completed || false,
+              completedAt: savedProgress.completed_at,
+              notes: savedProgress.notes || '',
+              checklistStatus: savedProgress.checklist_status || step.checklist.map(item => ({ text: item, checked: false })),
+              actualCost: savedProgress.actual_cost ? parseFloat(savedProgress.actual_cost) : null,
+              expenseType: savedProgress.expense_type || 'CAPEX'
+            }
+          }
+          return step
+        })
+        setSteps(updatedSteps)
+      } else {
+        // Reset to default steps if no progress saved
+        setSteps(sampleSteps)
+      }
+    } catch (error) {
+      console.error('Error fetching step progress:', error)
+    }
+  }
+
   const fetchUserBusinesses = async () => {
     try {
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) return
+      
+      setCurrentUserId(user.id)
 
       const { data, error } = await supabase
         .from('user_businesses')
@@ -210,6 +276,56 @@ export function MyBusiness() {
   const totalCost = steps.reduce((sum, step) => sum + step.estimatedCost, 0)
   const spentCost = steps.filter(s => s.completed).reduce((sum, step) => sum + step.estimatedCost, 0)
 
+  // Start editing expected profit
+  const startEditingProfit = () => {
+    setExpectedProfitValue(selectedBusiness?.expected_monthly_profit || selectedBusiness?.monthly_profit || '')
+    setEditingProfit(true)
+  }
+
+  // Cancel editing expected profit
+  const cancelEditingProfit = () => {
+    setEditingProfit(false)
+    setExpectedProfitValue('')
+  }
+
+  // Save expected profit
+  const saveExpectedProfit = async () => {
+    if (!selectedBusiness?.userBusinessId) return
+    
+    setSavingProfit(true)
+    try {
+      const newProfit = parseFloat(expectedProfitValue) || 0
+      
+      const { error } = await supabase
+        .from('user_businesses')
+        .update({ expected_monthly_profit: newProfit })
+        .eq('id', selectedBusiness.userBusinessId)
+
+      if (error) throw error
+
+      // Update local state
+      setSelectedBusiness({
+        ...selectedBusiness,
+        expected_monthly_profit: newProfit
+      })
+      
+      // Update in userBusinesses array
+      setUserBusinesses(userBusinesses.map(b => 
+        b.id === selectedBusiness.userBusinessId 
+          ? { ...b, expected_monthly_profit: newProfit }
+          : b
+      ))
+      
+      setEditingProfit(false)
+      setExpectedProfitValue('')
+    } catch (error) {
+      console.error('Error saving expected profit:', error)
+      alert('Failed to save expected profit. Please try again.')
+    } finally {
+      setSavingProfit(false)
+    }
+  }
+
   // Open step completion modal
   const openStepModal = (step) => {
     setStepToComplete(step)
@@ -249,20 +365,84 @@ export function MyBusiness() {
         : step
     ))
 
-    // If step is completed and has a cost, save to financial_records
+    // Save step progress to database
+    if (selectedBusiness?.userBusinessId) {
+      try {
+        // Check if progress record exists
+        const { data: existingProgress } = await supabase
+          .from('step_progress')
+          .select('id')
+          .eq('user_business_id', selectedBusiness.userBusinessId)
+          .eq('step_number', stepToComplete.id)
+          .single()
+
+        const progressData = {
+          user_business_id: selectedBusiness.userBusinessId,
+          step_number: stepToComplete.id,
+          step_title: stepToComplete.title,
+          completed: allChecked,
+          completed_at: allChecked ? stepCompletionDate : null,
+          notes: stepNotes,
+          checklist_status: stepChecklist,
+          actual_cost: actualCostValue > 0 ? actualCostValue : null,
+          expense_type: stepExpenseType,
+          updated_at: new Date().toISOString()
+        }
+
+        if (existingProgress) {
+          // Update existing record
+          await supabase
+            .from('step_progress')
+            .update(progressData)
+            .eq('id', existingProgress.id)
+        } else {
+          // Insert new record
+          await supabase
+            .from('step_progress')
+            .insert([progressData])
+        }
+        console.log('Step progress saved:', stepToComplete.title)
+      } catch (error) {
+        console.error('Error saving step progress:', error)
+      }
+    }
+
+    // If step is completed and has a cost, save to financial_records (only if not already saved)
     if (allChecked && actualCostValue > 0 && selectedBusiness?.userBusinessId) {
       try {
-        await supabase
+        // Check if financial record already exists for this step
+        const { data: existingRecord } = await supabase
           .from('financial_records')
-          .insert([{
-            user_business_id: selectedBusiness.userBusinessId,
-            type: stepExpenseType,
-            category: stepToComplete.title,
-            amount: actualCostValue,
-            description: `${stepToComplete.title} - ${stepNotes || stepToComplete.description}`,
-            date: stepCompletionDate
-          }])
-        console.log('Transaction saved for step:', stepToComplete.title)
+          .select('id')
+          .eq('user_business_id', selectedBusiness.userBusinessId)
+          .eq('category', stepToComplete.title)
+          .single()
+
+        if (!existingRecord) {
+          await supabase
+            .from('financial_records')
+            .insert([{
+              user_business_id: selectedBusiness.userBusinessId,
+              type: stepExpenseType,
+              category: stepToComplete.title,
+              amount: actualCostValue,
+              description: `${stepToComplete.title} - ${stepNotes || stepToComplete.description}`,
+              date: stepCompletionDate
+            }])
+          console.log('Transaction saved for step:', stepToComplete.title)
+        } else {
+          // Update existing financial record
+          await supabase
+            .from('financial_records')
+            .update({
+              type: stepExpenseType,
+              amount: actualCostValue,
+              description: `${stepToComplete.title} - ${stepNotes || stepToComplete.description}`,
+              date: stepCompletionDate
+            })
+            .eq('id', existingRecord.id)
+          console.log('Transaction updated for step:', stepToComplete.title)
+        }
       } catch (error) {
         console.error('Error saving transaction:', error)
       }
@@ -407,11 +587,59 @@ export function MyBusiness() {
 
         <Card>
           <CardContent className="pt-6">
-            <div className="text-sm text-slate-600 mb-1">Expected Profit</div>
-            <div className="text-2xl font-bold text-green-600">
-              {formatCurrency(selectedBusiness?.expected_monthly_profit || selectedBusiness?.monthly_profit || 0)}
+            <div className="flex items-center justify-between mb-1">
+              <div className="text-sm text-slate-600">Expected Profit</div>
+              {!editingProfit && (
+                <button
+                  onClick={startEditingProfit}
+                  className="p-1 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded transition-colors"
+                  title="Edit expected profit"
+                >
+                  <Edit2 className="h-4 w-4" />
+                </button>
+              )}
             </div>
-            <div className="text-sm text-slate-500 mt-1">per month</div>
+            
+            {editingProfit ? (
+              <div className="space-y-2">
+                <div className="flex items-center space-x-2">
+                  <span className="text-lg text-slate-500">$</span>
+                  <input
+                    type="number"
+                    value={expectedProfitValue}
+                    onChange={(e) => setExpectedProfitValue(e.target.value)}
+                    className="w-full px-2 py-1 text-xl font-bold text-green-600 border border-slate-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    placeholder="0"
+                    autoFocus
+                  />
+                </div>
+                <div className="flex items-center space-x-2">
+                  <button
+                    onClick={saveExpectedProfit}
+                    disabled={savingProfit}
+                    className="flex items-center space-x-1 px-2 py-1 bg-green-600 text-white text-sm rounded hover:bg-green-700 disabled:opacity-50"
+                  >
+                    <Check className="h-3 w-3" />
+                    <span>{savingProfit ? 'Saving...' : 'Save'}</span>
+                  </button>
+                  <button
+                    onClick={cancelEditingProfit}
+                    disabled={savingProfit}
+                    className="flex items-center space-x-1 px-2 py-1 bg-slate-200 text-slate-700 text-sm rounded hover:bg-slate-300"
+                  >
+                    <X className="h-3 w-3" />
+                    <span>Cancel</span>
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <>
+                <div className="text-2xl font-bold text-green-600">
+                  {formatCurrency(selectedBusiness?.expected_monthly_profit || selectedBusiness?.monthly_profit || 0)}
+                </div>
+                <div className="text-sm text-slate-500 mt-1">per month</div>
+              </>
+            )}
           </CardContent>
         </Card>
       </div>
@@ -446,17 +674,56 @@ export function MyBusiness() {
 
                     <div className="flex-1">
                       <div className="flex items-center justify-between mb-2">
-                        <h3 className={`text-lg font-semibold ${
-                          step.completed ? 'text-green-700' : 'text-slate-900'
-                        }`}>
-                          {step.title}
-                        </h3>
+                        <div className="flex items-center space-x-2">
+                          <h3 className={`text-lg font-semibold ${
+                            step.completed ? 'text-green-700' : 'text-slate-900'
+                          }`}>
+                            {step.title}
+                          </h3>
+                          {/* Status Badge */}
+                          {step.completed ? (
+                            <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-700 border border-green-300">
+                              Done
+                            </span>
+                          ) : (
+                            <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-yellow-100 text-yellow-700 border border-yellow-300">
+                              Pending
+                            </span>
+                          )}
+                        </div>
                         <span className="text-sm font-medium text-slate-600">
                           {formatCurrency(step.estimatedCost)}
                         </span>
                       </div>
 
                       <p className="text-sm text-slate-600 mb-2">{step.description}</p>
+
+                      {/* Show country authority for Licenses & Registration step */}
+                      {step.title === 'Licenses & Registration' && countryAuthority && (
+                        <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 mb-3">
+                          <div className="flex items-start space-x-2">
+                            <Building2 className="h-5 w-5 text-blue-600 mt-0.5 flex-shrink-0" />
+                            <div className="flex-1">
+                              <p className="text-sm font-medium text-blue-900">
+                                {countryAuthority.country_name} Registration Authority
+                              </p>
+                              <p className="text-sm text-blue-700">{countryAuthority.authority_name}</p>
+                              {countryAuthority.authority_website && (
+                                <a
+                                  href={countryAuthority.authority_website}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="inline-flex items-center space-x-1 text-sm text-blue-600 hover:text-blue-800 hover:underline mt-1"
+                                  onClick={(e) => e.stopPropagation()}
+                                >
+                                  <span>Visit Official Website</span>
+                                  <ExternalLink className="h-3 w-3" />
+                                </a>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      )}
 
                       {/* Show completion info */}
                       {step.completed && step.completedAt && (
@@ -650,6 +917,37 @@ export function MyBusiness() {
 
             {/* Modal Body */}
             <div className="p-6 space-y-6">
+              {/* Country Authority Info for Licenses & Registration */}
+              {stepToComplete.title === 'Licenses & Registration' && countryAuthority && (
+                <div className="bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-lg p-4">
+                  <div className="flex items-start space-x-3">
+                    <div className="bg-blue-100 rounded-full p-2">
+                      <Building2 className="h-6 w-6 text-blue-600" />
+                    </div>
+                    <div className="flex-1">
+                      <h4 className="font-semibold text-blue-900">
+                        {countryAuthority.country_name} Business Registration
+                      </h4>
+                      <p className="text-blue-700 mt-1">{countryAuthority.authority_name}</p>
+                      {countryAuthority.authority_website && (
+                        <a
+                          href={countryAuthority.authority_website}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center space-x-2 mt-3 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+                        >
+                          <span>Visit Official Website</span>
+                          <ExternalLink className="h-4 w-4" />
+                        </a>
+                      )}
+                      <p className="text-xs text-blue-600 mt-2">
+                        Register your business with the official authority to operate legally.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
+
               {/* Checklist */}
               <div>
                 <h4 className="text-sm font-semibold text-slate-700 mb-3">
@@ -773,13 +1071,15 @@ export function MyBusiness() {
                 </div>
               </div>
 
-              {/* Video Tutorial Link */}
-              <div className="flex items-center space-x-2 text-blue-600">
-                <Video className="h-5 w-5" />
-                <a href={stepToComplete.videoUrl} target="_blank" rel="noopener noreferrer" className="hover:underline">
-                  Watch Tutorial Video
-                </a>
-              </div>
+              {/* Video Tutorial Link - hide for Licenses & Registration since it has country authority info */}
+              {stepToComplete.title !== 'Licenses & Registration' && (
+                <div className="flex items-center space-x-2 text-blue-600">
+                  <Video className="h-5 w-5" />
+                  <a href={stepToComplete.videoUrl} target="_blank" rel="noopener noreferrer" className="hover:underline">
+                    Watch Tutorial Video
+                  </a>
+                </div>
+              )}
             </div>
 
             {/* Modal Footer */}

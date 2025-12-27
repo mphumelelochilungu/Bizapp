@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo } from 'react'
-import { User, Mail, MapPin, DollarSign, Save, Search, Globe, Check, ChevronDown, X, Phone, Loader2 } from 'lucide-react'
+import { useLocation, useNavigate } from 'react-router-dom'
+import { User, Mail, MapPin, DollarSign, Save, Search, Globe, Check, ChevronDown, X, Phone, Loader2, AlertCircle } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/Card'
 import { Button } from '../components/ui/Button'
 import { Input } from '../components/ui/Input'
@@ -7,8 +8,15 @@ import { COUNTRIES_CURRENCIES, CURRENCIES_MAP, formatCurrency } from '../lib/uti
 import { PHONE_CODES, getPhoneCode } from '../lib/phoneCodes'
 import { useLocalStorage } from '../hooks/useLocalStorage'
 import { supabase } from '../lib/supabase'
+import { useQueryClient } from '@tanstack/react-query'
 
 export function Profile() {
+  const location = useLocation()
+  const navigate = useNavigate()
+  const queryClient = useQueryClient()
+  const firstTimeSetup = location.state?.firstTimeSetup || false
+  const fromOnboarding = location.state?.fromOnboarding || false
+
   // Keep localStorage as fallback/cache
   const [localProfile, setLocalProfile] = useLocalStorage('userProfile', {
     name: '',
@@ -138,6 +146,7 @@ export function Profile() {
             phone: formData.phone,
             country_code: formData.country,
             currency_code: formData.currency,
+            profile_completed: true,
             updated_at: new Date().toISOString()
           })
           .eq('user_id', userId)
@@ -151,7 +160,8 @@ export function Profile() {
             full_name: formData.name,
             phone: formData.phone,
             country_code: formData.country,
-            currency_code: formData.currency
+            currency_code: formData.currency,
+            profile_completed: true
           })
         error = result.error
       }
@@ -162,8 +172,24 @@ export function Profile() {
       } else {
         // Also save to localStorage as cache
         setLocalProfile(formData)
+        
+        // Invalidate profile completion query to refresh the check
+        queryClient.invalidateQueries({ queryKey: ['profileCompletion'] })
+        
         setSaved(true)
-        setTimeout(() => setSaved(false), 2000)
+        
+        // If first-time setup or from onboarding, redirect appropriately
+        if (firstTimeSetup) {
+          setTimeout(() => {
+            navigate('/dashboard')
+          }, 1000)
+        } else if (fromOnboarding) {
+          setTimeout(() => {
+            navigate('/onboarding')
+          }, 1000)
+        } else {
+          setTimeout(() => setSaved(false), 2000)
+        }
       }
     } catch (err) {
       console.error('Error saving profile:', err)
@@ -187,12 +213,40 @@ export function Profile() {
 
   return (
     <div className="max-w-3xl mx-auto">
+      {/* First-time setup banner */}
+      {(firstTimeSetup || fromOnboarding) && (
+        <div className="mb-6 bg-blue-50 border border-blue-200 rounded-lg p-4">
+          <div className="flex items-start space-x-3">
+            <AlertCircle className="h-6 w-6 text-blue-600 flex-shrink-0 mt-0.5" />
+            <div>
+              <h3 className="font-semibold text-blue-900">
+                {fromOnboarding ? 'Complete Your Profile First' : 'Welcome! Please Complete Your Profile'}
+              </h3>
+              <p className="text-sm text-blue-800 mt-1">
+                {fromOnboarding 
+                  ? 'Before starting a business, please fill in your profile information below. This helps us personalize your experience.'
+                  : 'Please fill in your profile information below to get started. This helps us personalize your experience and set the right currency for your region.'
+                }
+              </p>
+              <ul className="text-sm text-blue-700 mt-2 list-disc list-inside">
+                <li>Enter your full name</li>
+                <li>Select your country (this sets your currency)</li>
+                <li>Add your phone number (optional)</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="mb-8">
         <h1 className="text-3xl font-bold text-slate-900 mb-2">
-          Profile Settings
+          {firstTimeSetup || fromOnboarding ? 'Complete Your Profile' : 'Profile Settings'}
         </h1>
         <p className="text-slate-600">
-          Manage your account information and currency preferences
+          {firstTimeSetup || fromOnboarding 
+            ? 'Fill in your details to continue'
+            : 'Manage your account information and currency preferences'
+          }
         </p>
       </div>
 
