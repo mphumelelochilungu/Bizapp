@@ -982,7 +982,7 @@ BEGIN
   (NEW.id, '7500', 'Other Expenses', 'Other Expense', 'Non-Operating Expenses'),
   (NEW.id, '7600', 'Loss on Asset Disposal', 'Other Expense', 'Non-Operating Expenses'),
   (NEW.id, '7700', 'Foreign Exchange Losses', 'Other Expense', 'Non-Operating Expenses'),
-  (NEW.id, '7800', 'Penalties & Fines', 'Other Expense', 'Non-Operating Expenses')
+  (NEW.id, '7801', 'Penalties & Fines', 'Other Expense', 'Non-Operating Expenses')
   ON CONFLICT (user_business_id, code) DO NOTHING;
   
   RETURN NEW;
