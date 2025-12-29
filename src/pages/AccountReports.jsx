@@ -242,34 +242,48 @@ export function AccountReports() {
 
     const revenues = revenueAccounts.map(account => {
       const { balance } = getAccountBalanceInRange(account.id, dateRange.startDate, dateRange.endDate)
-      return { ...account, balance: Math.abs(balance) }
-    }).filter(a => a.balance !== 0)
+      // Revenue has credit balance (negative in our system)
+      // If balance < 0 (normal credit), show as positive revenue
+      // If balance > 0 (abnormal debit - e.g., returns or misclassified expense), show as negative (contra-revenue)
+      const displayBalance = balance < 0 ? Math.abs(balance) : -balance
+      const isAbnormal = balance > 0
+      return { ...account, balance: displayBalance, rawBalance: balance, isAbnormal }
+    }).filter(a => a.balance !== 0 || a.rawBalance !== 0)
 
     const cogs = cogsAccounts.map(account => {
       const { balance } = getAccountBalanceInRange(account.id, dateRange.startDate, dateRange.endDate)
       return { ...account, balance: Math.abs(balance) }
     }).filter(a => a.balance !== 0)
 
-    const expenses = expenseAccounts.map(account => {
+    // Separate operating and non-operating expenses
+    const allExpenses = expenseAccounts.map(account => {
       const { balance } = getAccountBalanceInRange(account.id, dateRange.startDate, dateRange.endDate)
       return { ...account, balance: Math.abs(balance) }
     }).filter(a => a.balance !== 0)
 
+    const operatingExpenses = allExpenses.filter(a => a.subcategory === 'Operating Expenses')
+    const nonOperatingExpenses = allExpenses.filter(a => a.subcategory === 'Non-Operating Expenses')
+
     const totalRevenue = revenues.reduce((sum, a) => sum + a.balance, 0)
     const totalCOGS = cogs.reduce((sum, a) => sum + a.balance, 0)
     const grossProfit = totalRevenue - totalCOGS
-    const totalExpenses = expenses.reduce((sum, a) => sum + a.balance, 0)
-    const netIncome = grossProfit - totalExpenses
+    const totalOperatingExpenses = operatingExpenses.reduce((sum, a) => sum + a.balance, 0)
+    const operatingProfit = grossProfit - totalOperatingExpenses
+    const totalNonOperatingExpenses = nonOperatingExpenses.reduce((sum, a) => sum + a.balance, 0)
+    const netIncome = operatingProfit - totalNonOperatingExpenses
 
     setReportData({
       type: 'income-statement',
       revenues,
       cogs,
-      expenses,
+      operatingExpenses,
+      nonOperatingExpenses,
       totalRevenue,
       totalCOGS,
       grossProfit,
-      totalExpenses,
+      totalOperatingExpenses,
+      operatingProfit,
+      totalNonOperatingExpenses,
       netIncome
     })
   }
@@ -279,75 +293,126 @@ export function AccountReports() {
     const liabilityAccounts = accounts.filter(a => a.account_type === 'Liability')
     const equityAccounts = accounts.filter(a => a.account_type === 'Equity')
 
-    // Assets: show all with non-zero balances
-    // Positive = normal debit balance, Negative = abnormal credit balance (indicates missing opening balance)
-    const assets = assetAccounts.map(account => {
+    // Assets: normal balance is DEBIT (positive in our calc)
+    const allAssetBalances = assetAccounts.map(account => {
       const { balance } = getAccountBalance(account.id, dateRange.endDate)
-      return { ...account, balance, hasAbnormalBalance: balance < 0 }
-    }).filter(a => a.balance !== 0)
+      return { ...account, balance, rawBalance: balance }
+    })
+    
+    const assets = allAssetBalances
+      .filter(a => a.rawBalance > 0)
+      .map(a => ({ ...a, hasAbnormalBalance: false }))
 
     // Liabilities: normal balance is CREDIT (negative in our calc)
-    const liabilities = liabilityAccounts.map(account => {
-      const { balance } = getAccountBalance(account.id, dateRange.endDate)
-      return { ...account, balance: Math.abs(balance), rawBalance: balance, hasAbnormalBalance: balance > 0 }
-    }).filter(a => a.rawBalance !== 0)
+    // For liabilities with debit balances, we need to calculate the implied opening
+    let totalOpeningBalanceEquityAdjustment = 0
+    
+    const allLiabilityBalances = liabilityAccounts.map(account => {
+      const { totalDebit, totalCredit, balance } = getAccountBalance(account.id, dateRange.endDate)
+      
+      // If balance > 0 (debit balance), it means debits > credits
+      // This implies there was an opening credit balance that we paid off
+      // Implied opening = totalDebit (the amount paid must have existed as liability)
+      // True ending liability = totalCredit (what we actually incurred and still owe)
+      
+      if (balance > 0) {
+        // Debit balance - missing opening entry
+        // The implied opening entry: Dr Opening Balance Equity, Cr Liability
+        const impliedOpening = totalDebit
+        totalOpeningBalanceEquityAdjustment -= impliedOpening // Debit to OBE reduces equity
+        
+        return { 
+          ...account, 
+          rawBalance: balance,
+          trueBalance: totalCredit, // What we actually owe (credits recorded)
+          hasAbnormalBalance: true,
+          impliedOpening
+        }
+      } else {
+        // Normal credit balance
+        return { 
+          ...account, 
+          rawBalance: balance,
+          trueBalance: Math.abs(balance),
+          hasAbnormalBalance: false,
+          impliedOpening: 0
+        }
+      }
+    })
+    
+    // Show all liabilities with their TRUE balances
+    const liabilities = allLiabilityBalances
+      .filter(a => a.trueBalance > 0)
+      .map(a => ({ 
+        ...a, 
+        balance: a.trueBalance
+      }))
 
     // Equity: normal balance is CREDIT (negative in our calc)
-    const equity = equityAccounts.map(account => {
+    const allEquityBalances = equityAccounts.map(account => {
       const { balance } = getAccountBalance(account.id, dateRange.endDate)
       return { ...account, balance: Math.abs(balance), rawBalance: balance }
-    }).filter(a => a.rawBalance < 0)
+    })
+    
+    const equity = allEquityBalances.filter(a => a.rawBalance < 0)
 
-    // Calculate retained earnings from revenue and expenses (current period net income)
+    // Calculate net income from revenue, COGS, and expenses
     const revenueAccounts = accounts.filter(a => a.account_type === 'Revenue')
+    const cogsAccounts = accounts.filter(a => a.account_type === 'COGS')
     const expenseAccounts = accounts.filter(a => a.account_type === 'Expense')
     
     let netIncome = 0
     revenueAccounts.forEach(account => {
       const { balance } = getAccountBalance(account.id, dateRange.endDate)
-      // Revenue has credit balance (negative), so we use absolute value
-      netIncome += Math.abs(balance)
+      if (balance < 0) {
+        netIncome += Math.abs(balance)
+      } else if (balance > 0) {
+        netIncome -= balance
+      }
+    })
+    cogsAccounts.forEach(account => {
+      const { balance } = getAccountBalance(account.id, dateRange.endDate)
+      netIncome -= Math.abs(balance)
     })
     expenseAccounts.forEach(account => {
       const { balance } = getAccountBalance(account.id, dateRange.endDate)
-      // Expenses have debit balance (positive)
       netIncome -= Math.abs(balance)
     })
 
-    // Calculate total assets (sum of all balances, including negative)
+    // Calculate totals
     const totalAssets = assets.reduce((sum, a) => sum + a.balance, 0)
-    
-    // For liabilities, use rawBalance to get proper sign, then take absolute
-    const totalLiabilities = liabilities.reduce((sum, a) => {
-      // If rawBalance < 0 (normal credit), add the absolute value
-      // If rawBalance > 0 (abnormal debit), subtract it
-      return sum + (a.rawBalance < 0 ? Math.abs(a.rawBalance) : -a.rawBalance)
-    }, 0)
-    
+    const totalLiabilities = liabilities.reduce((sum, a) => sum + a.balance, 0)
     const totalEquityFromAccounts = equity.reduce((sum, a) => sum + a.balance, 0)
     
-    // Check for imbalance - this indicates missing opening balances
-    const preliminaryTotal = totalLiabilities + totalEquityFromAccounts + netIncome
-    const imbalance = totalAssets - preliminaryTotal
+    // Calculate opening retained earnings to balance the sheet
+    // Formula: Assets = Liabilities + Equity
+    // Equity = Owner's Equity + Opening Balance Equity Adj + Opening RE + Net Income
+    const preliminaryEquity = totalEquityFromAccounts + totalOpeningBalanceEquityAdjustment + netIncome
+    const openingRetainedEarnings = totalAssets - totalLiabilities - preliminaryEquity
     
-    // Opening retained earnings = imbalance (to make it balance)
-    // This represents prior period earnings not recorded in current entries
-    const openingRetainedEarnings = imbalance
     const totalRetainedEarnings = openingRetainedEarnings + netIncome
-    const totalEquity = totalEquityFromAccounts + totalRetainedEarnings
+    const totalEquity = totalEquityFromAccounts + totalOpeningBalanceEquityAdjustment + totalRetainedEarnings
+    
+    // Flag if there are abnormal balances (informational)
+    const hasAbnormalBalances = liabilities.some(l => l.hasAbnormalBalance)
 
     setReportData({
       type: 'balance-sheet',
       assets,
       liabilities,
       equity,
+      invalidAssets: [],
+      invalidLiabilities: [],
       openingRetainedEarnings,
+      openingBalanceEquityAdjustment: totalOpeningBalanceEquityAdjustment,
       netIncome,
       totalRetainedEarnings,
       totalAssets,
       totalLiabilities,
       totalEquity,
-      hasImbalance: Math.abs(imbalance) > 0.01
+      hasDataErrors: false,
+      hasAbnormalBalances,
+      hasImbalance: Math.abs(totalAssets - (totalLiabilities + totalEquity)) > 0.01
     })
   }
 
@@ -360,9 +425,14 @@ export function AccountReports() {
 
     const cashMovements = []
     let openingBalance = 0
-    let operatingActivities = 0
-    let investingActivities = 0
-    let financingActivities = 0
+    
+    // Track inflows and outflows separately for each category
+    let operatingInflows = 0
+    let operatingOutflows = 0
+    let investingInflows = 0
+    let investingOutflows = 0
+    let financingInflows = 0
+    let financingOutflows = 0
 
     journalEntries.forEach(entry => {
       const entryDate = new Date(entry.entry_date)
@@ -378,31 +448,54 @@ export function AccountReports() {
 
       entry.journal_entry_lines?.forEach(line => {
         if (line.account_id === cashAccount.id) {
-          const amount = (parseFloat(line.debit_amount) || 0) - (parseFloat(line.credit_amount) || 0)
+          const debit = parseFloat(line.debit_amount) || 0
+          const credit = parseFloat(line.credit_amount) || 0
+          const amount = debit - credit
           const otherLines = entry.journal_entry_lines.filter(l => l.account_id !== cashAccount.id)
           const category = categorizeTransaction(otherLines)
           
+          // Get description from the other account(s) in the entry
+          const otherAccount = otherLines.length > 0 ? accounts.find(a => a.id === otherLines[0].account_id) : null
+          const description = entry.description || otherAccount?.name || 'Cash transaction'
+          
           cashMovements.push({
             date: entry.entry_date,
-            description: entry.description,
+            description,
             amount,
-            category
+            category,
+            isInflow: amount > 0
           })
 
-          if (category === 'operating') operatingActivities += amount
-          else if (category === 'investing') investingActivities += amount
-          else if (category === 'financing') financingActivities += amount
+          if (category === 'operating') {
+            if (amount > 0) operatingInflows += amount
+            else operatingOutflows += Math.abs(amount)
+          } else if (category === 'investing') {
+            if (amount > 0) investingInflows += amount
+            else investingOutflows += Math.abs(amount)
+          } else if (category === 'financing') {
+            if (amount > 0) financingInflows += amount
+            else financingOutflows += Math.abs(amount)
+          }
         }
       })
     })
 
+    const operatingActivities = operatingInflows - operatingOutflows
+    const investingActivities = investingInflows - investingOutflows
+    const financingActivities = financingInflows - financingOutflows
     const closingBalance = openingBalance + operatingActivities + investingActivities + financingActivities
 
     setReportData({
       type: 'cash-flow',
       openingBalance,
+      operatingInflows,
+      operatingOutflows,
       operatingActivities,
+      investingInflows,
+      investingOutflows,
       investingActivities,
+      financingInflows,
+      financingOutflows,
       financingActivities,
       closingBalance,
       cashMovements
@@ -422,6 +515,16 @@ export function AccountReports() {
   }
 
   const generateTrialBalance = () => {
+    // Define normal balance directions for each account type
+    const normalBalanceIsDebit = {
+      'Asset': true,
+      'Expense': true,
+      'COGS': true,
+      'Liability': false,
+      'Equity': false,
+      'Revenue': false
+    }
+    
     const balances = accounts.map(account => {
       const { totalDebit, totalCredit, balance } = getAccountBalance(account.id, dateRange.endDate)
       
@@ -438,25 +541,39 @@ export function AccountReports() {
         displayCredit = Math.abs(balance)
       }
       
+      // Check if balance is abnormal for this account type
+      const expectsDebit = normalBalanceIsDebit[account.account_type]
+      const hasDebitBalance = balance > 0
+      const hasAbnormalBalance = balance !== 0 && expectsDebit !== hasDebitBalance
+      
       return {
         ...account,
         totalDebit,
         totalCredit,
         balance,
         displayDebit,
-        displayCredit
+        displayCredit,
+        hasAbnormalBalance,
+        abnormalReason: hasAbnormalBalance 
+          ? (expectsDebit 
+              ? 'Credit balance (normally Debit)' 
+              : 'Debit balance (normally Credit) - may indicate missing opening entry')
+          : null
       }
     }).filter(a => a.displayDebit > 0 || a.displayCredit > 0)
 
     const totalDebits = balances.reduce((sum, a) => sum + a.displayDebit, 0)
     const totalCredits = balances.reduce((sum, a) => sum + a.displayCredit, 0)
+    const abnormalBalances = balances.filter(b => b.hasAbnormalBalance)
 
     setReportData({
       type: 'trial-balance',
       balances,
       totalDebits,
       totalCredits,
-      isBalanced: Math.abs(totalDebits - totalCredits) < 0.01
+      isBalanced: Math.abs(totalDebits - totalCredits) < 0.01,
+      hasAbnormalBalances: abnormalBalances.length > 0,
+      abnormalBalances
     })
   }
 
@@ -537,19 +654,42 @@ export function AccountReports() {
   }
 
   const generateExpenseAnalysis = () => {
+    // Get COGS accounts
+    const cogsAccounts = accounts.filter(a => a.account_type === 'COGS')
+    const cogs = cogsAccounts.map(account => {
+      const { balance } = getAccountBalanceInRange(account.id, dateRange.startDate, dateRange.endDate)
+      return { ...account, amount: Math.abs(balance) }
+    }).filter(a => a.amount > 0).sort((a, b) => b.amount - a.amount)
+    const totalCOGS = cogs.reduce((sum, a) => sum + a.amount, 0)
+
+    // Get Operating Expense accounts
     const expenseAccounts = accounts.filter(a => a.account_type === 'Expense')
-    
     const expenses = expenseAccounts.map(account => {
       const { balance } = getAccountBalanceInRange(account.id, dateRange.startDate, dateRange.endDate)
       return { ...account, amount: Math.abs(balance) }
     }).filter(a => a.amount > 0).sort((a, b) => b.amount - a.amount)
-
     const totalExpenses = expenses.reduce((sum, a) => sum + a.amount, 0)
+
+    // Get Total Revenue for percentage calculation
+    const revenueAccounts = accounts.filter(a => a.account_type === 'Revenue')
+    const totalRevenue = revenueAccounts.reduce((sum, account) => {
+      const { balance } = getAccountBalanceInRange(account.id, dateRange.startDate, dateRange.endDate)
+      return sum + Math.abs(balance)
+    }, 0)
+
+    // Calculate combined totals
+    const totalCosts = totalCOGS + totalExpenses
+    const grossProfit = totalRevenue - totalCOGS
 
     setReportData({
       type: 'expense-analysis',
+      cogs,
+      totalCOGS,
       expenses,
-      totalExpenses
+      totalExpenses,
+      totalRevenue,
+      totalCosts,
+      grossProfit
     })
   }
 
@@ -573,81 +713,191 @@ export function AccountReports() {
   const generateAPAging = () => {
     const apAccount = accounts.find(a => a.name.toLowerCase().includes('accounts payable') || a.name.toLowerCase().includes('payable'))
     if (!apAccount) {
-      setReportData({ type: 'ap-aging', error: 'No Accounts Payable account found', aging: [] })
+      setReportData({ type: 'ap-aging', error: 'No Accounts Payable account found', transactions: [] })
       return
     }
 
-    const today = new Date()
-    const aging = { current: 0, days30: 0, days60: 0, days90: 0, over90: 0 }
-
-    journalEntries.forEach(entry => {
-      entry.journal_entry_lines?.forEach(line => {
-        if (line.account_id === apAccount.id) {
-          const credit = parseFloat(line.credit_amount) || 0
-          const debit = parseFloat(line.debit_amount) || 0
-          const net = credit - debit
-          if (net <= 0) return
-
-          const daysDiff = Math.floor((today - new Date(entry.entry_date)) / (1000 * 60 * 60 * 24))
-          
-          if (daysDiff <= 30) aging.current += net
-          else if (daysDiff <= 60) aging.days30 += net
-          else if (daysDiff <= 90) aging.days60 += net
-          else if (daysDiff <= 120) aging.days90 += net
-          else aging.over90 += net
-        }
+    const today = new Date(dateRange.endDate)
+    
+    // Collect all A/P transactions with running balance
+    const transactions = []
+    let runningBalance = 0
+    
+    journalEntries
+      .filter(entry => new Date(entry.entry_date) <= today)
+      .sort((a, b) => new Date(a.entry_date) - new Date(b.entry_date))
+      .forEach(entry => {
+        entry.journal_entry_lines?.forEach(line => {
+          if (line.account_id === apAccount.id) {
+            const credit = parseFloat(line.credit_amount) || 0
+            const debit = parseFloat(line.debit_amount) || 0
+            const amount = credit - debit
+            
+            if (amount !== 0) {
+              runningBalance += amount
+              
+              // Get vendor/description from other lines in the entry
+              const otherLines = entry.journal_entry_lines.filter(l => l.account_id !== apAccount.id)
+              const otherAccount = otherLines.length > 0 ? accounts.find(a => a.id === otherLines[0].account_id) : null
+              const vendor = entry.description || otherAccount?.name || 'General'
+              
+              transactions.push({
+                date: entry.entry_date,
+                vendor,
+                description: entry.description,
+                debit,
+                credit,
+                amount,
+                balance: runningBalance,
+                entryId: entry.id
+              })
+            }
+          }
+        })
       })
+    
+    // Calculate aging buckets based on outstanding balance
+    const aging = { current: 0, days30: 0, days60: 0, days90: 0, days120: 0, over120: 0 }
+    
+    // For each credit (purchase), track if it's been paid off
+    const outstandingPurchases = []
+    transactions.forEach(tx => {
+      if (tx.credit > 0) {
+        // This is a purchase/liability increase
+        const daysDiff = Math.floor((today - new Date(tx.date)) / (1000 * 60 * 60 * 24))
+        outstandingPurchases.push({
+          date: tx.date,
+          amount: tx.credit,
+          age: daysDiff,
+          vendor: tx.vendor
+        })
+      } else if (tx.debit > 0) {
+        // This is a payment - reduce oldest purchases first (FIFO)
+        let paymentRemaining = tx.debit
+        for (let i = 0; i < outstandingPurchases.length && paymentRemaining > 0; i++) {
+          const purchase = outstandingPurchases[i]
+          const paymentApplied = Math.min(purchase.amount, paymentRemaining)
+          purchase.amount -= paymentApplied
+          paymentRemaining -= paymentApplied
+        }
+      }
+    })
+    
+    // Age the remaining outstanding purchases
+    outstandingPurchases.forEach(purchase => {
+      if (purchase.amount > 0) {
+        if (purchase.age <= 30) aging.current += purchase.amount
+        else if (purchase.age <= 60) aging.days30 += purchase.amount
+        else if (purchase.age <= 90) aging.days60 += purchase.amount
+        else if (purchase.age <= 120) aging.days90 += purchase.amount
+        else aging.over120 += purchase.amount
+      }
     })
 
-    const { balance } = getAccountBalance(apAccount.id)
+    const { balance } = getAccountBalance(apAccount.id, dateRange.endDate)
+    const totalPayable = Math.abs(balance)
     
     setReportData({
       type: 'ap-aging',
+      transactions,
+      outstandingPurchases: outstandingPurchases.filter(p => p.amount > 0),
       aging,
-      totalPayable: Math.abs(balance)
+      totalPayable
     })
   }
 
   const generateARAging = () => {
     const arAccount = accounts.find(a => a.name.toLowerCase().includes('accounts receivable') || a.name.toLowerCase().includes('receivable'))
     if (!arAccount) {
-      setReportData({ type: 'ar-aging', error: 'No Accounts Receivable account found', aging: [] })
+      setReportData({ type: 'ar-aging', error: 'No Accounts Receivable account found', transactions: [] })
       return
     }
 
-    const today = new Date()
-    const aging = { current: 0, days30: 0, days60: 0, days90: 0, over90: 0 }
-
-    journalEntries.forEach(entry => {
-      entry.journal_entry_lines?.forEach(line => {
-        if (line.account_id === arAccount.id) {
-          const debit = parseFloat(line.debit_amount) || 0
-          const credit = parseFloat(line.credit_amount) || 0
-          const net = debit - credit
-          if (net <= 0) return
-
-          const daysDiff = Math.floor((today - new Date(entry.entry_date)) / (1000 * 60 * 60 * 24))
-          
-          if (daysDiff <= 30) aging.current += net
-          else if (daysDiff <= 60) aging.days30 += net
-          else if (daysDiff <= 90) aging.days60 += net
-          else if (daysDiff <= 120) aging.days90 += net
-          else aging.over90 += net
-        }
+    const today = new Date(dateRange.endDate)
+    
+    // Collect all A/R transactions with running balance
+    const transactions = []
+    let runningBalance = 0
+    
+    journalEntries
+      .filter(entry => new Date(entry.entry_date) <= today)
+      .sort((a, b) => new Date(a.entry_date) - new Date(b.entry_date))
+      .forEach(entry => {
+        entry.journal_entry_lines?.forEach(line => {
+          if (line.account_id === arAccount.id) {
+            const debit = parseFloat(line.debit_amount) || 0
+            const credit = parseFloat(line.credit_amount) || 0
+            const amount = debit - credit
+            
+            if (amount !== 0) {
+              runningBalance += amount
+              
+              // Get customer/description from other lines in the entry
+              const otherLines = entry.journal_entry_lines.filter(l => l.account_id !== arAccount.id)
+              const otherAccount = otherLines.length > 0 ? accounts.find(a => a.id === otherLines[0].account_id) : null
+              const customer = entry.description || otherAccount?.name || 'General'
+              
+              transactions.push({
+                date: entry.entry_date,
+                customer,
+                description: entry.description,
+                debit,
+                credit,
+                amount,
+                balance: runningBalance,
+                entryId: entry.id
+              })
+            }
+          }
+        })
       })
+    
+    // Calculate aging buckets based on outstanding balance
+    const aging = { current: 0, days30: 0, days60: 0, days90: 0, days120: 0, over120: 0 }
+    
+    // For each debit (invoice), track if it's been collected
+    const outstandingInvoices = []
+    transactions.forEach(tx => {
+      if (tx.debit > 0) {
+        // This is an invoice/receivable increase
+        const daysDiff = Math.floor((today - new Date(tx.date)) / (1000 * 60 * 60 * 24))
+        outstandingInvoices.push({
+          date: tx.date,
+          amount: tx.debit,
+          age: daysDiff,
+          customer: tx.customer
+        })
+      } else if (tx.credit > 0) {
+        // This is a collection - reduce oldest invoices first (FIFO)
+        let collectionRemaining = tx.credit
+        for (let i = 0; i < outstandingInvoices.length && collectionRemaining > 0; i++) {
+          const invoice = outstandingInvoices[i]
+          const collectionApplied = Math.min(invoice.amount, collectionRemaining)
+          invoice.amount -= collectionApplied
+          collectionRemaining -= collectionApplied
+        }
+      }
+    })
+    
+    // Age the remaining outstanding invoices
+    outstandingInvoices.forEach(invoice => {
+      if (invoice.amount > 0) {
+        if (invoice.age <= 30) aging.current += invoice.amount
+        else if (invoice.age <= 60) aging.days30 += invoice.amount
+        else if (invoice.age <= 90) aging.days60 += invoice.amount
+        else if (invoice.age <= 120) aging.days90 += invoice.amount
+        else aging.over120 += invoice.amount
+      }
     })
 
-    const { balance } = getAccountBalance(arAccount.id)
-    
-    // AR should never show negative - if balance is negative or zero, show 0
+    const { balance } = getAccountBalance(arAccount.id, dateRange.endDate)
     const totalReceivable = balance > 0 ? balance : 0
-    
-    // If total receivable is 0 or negative, reset all aging buckets to 0
-    const finalAging = totalReceivable > 0 ? aging : { current: 0, days30: 0, days60: 0, days90: 0, over90: 0 }
     
     setReportData({
       type: 'ar-aging',
-      aging: finalAging,
+      transactions,
+      outstandingInvoices: outstandingInvoices.filter(i => i.amount > 0),
+      aging,
       totalReceivable
     })
   }
@@ -709,12 +959,15 @@ export function AccountReports() {
           { name: 'Revenue', value: reportData.totalRevenue, fill: CHART_COLORS.revenue },
           { name: 'COGS', value: reportData.totalCOGS, fill: '#f97316' },
           { name: 'Gross Profit', value: reportData.grossProfit, fill: '#3b82f6' },
-          { name: 'Expenses', value: reportData.totalExpenses, fill: CHART_COLORS.expenses },
+          { name: 'Operating Expenses', value: reportData.totalOperatingExpenses, fill: CHART_COLORS.expenses },
+          { name: 'Operating Profit', value: Math.abs(reportData.operatingProfit), fill: reportData.operatingProfit >= 0 ? '#10b981' : '#ef4444' },
+          { name: 'Non-Operating Expenses', value: reportData.totalNonOperatingExpenses, fill: '#dc2626' },
           { name: reportData.netIncome >= 0 ? 'Net Profit' : 'Net Loss', value: Math.abs(reportData.netIncome), fill: reportData.netIncome >= 0 ? CHART_COLORS.assets : CHART_COLORS.liabilities }
         ]
         const expenseBreakdown = [
           ...reportData.cogs.map((e, i) => ({ name: e.name, value: e.balance, fill: PIE_COLORS[i % PIE_COLORS.length] })),
-          ...reportData.expenses.map((e, i) => ({ name: e.name, value: e.balance, fill: PIE_COLORS[(i + reportData.cogs.length) % PIE_COLORS.length] }))
+          ...reportData.operatingExpenses.map((e, i) => ({ name: e.name, value: e.balance, fill: PIE_COLORS[(i + reportData.cogs.length) % PIE_COLORS.length] })),
+          ...reportData.nonOperatingExpenses.map((e, i) => ({ name: e.name, value: e.balance, fill: PIE_COLORS[(i + reportData.cogs.length + reportData.operatingExpenses.length) % PIE_COLORS.length] }))
         ]
         
         return (
@@ -770,23 +1023,50 @@ export function AccountReports() {
 
               <div className="border-b pb-4">
                 <h3 className="text-lg font-semibold text-red-700 mb-3">Operating Expenses</h3>
-                {reportData.expenses.length === 0 ? (
-                  <p className="text-slate-500 text-sm">No expenses recorded</p>
+                {reportData.operatingExpenses.length === 0 ? (
+                  <p className="text-slate-500 text-sm">No operating expenses recorded</p>
                 ) : (
                   <div className="space-y-2">
-                    {reportData.expenses.map(account => (
+                    {reportData.operatingExpenses.map(account => (
                       <div key={account.id} className="flex justify-between">
                         <span className="text-slate-600">{account.name}</span>
                         <span className="font-medium">{formatCurrency(account.balance)}</span>
                       </div>
                     ))}
                     <div className="flex justify-between font-semibold border-t pt-2">
-                      <span>Total Expenses</span>
-                      <span className="text-red-600">{formatCurrency(reportData.totalExpenses)}</span>
+                      <span>Total Operating Expenses</span>
+                      <span className="text-red-600">{formatCurrency(reportData.totalOperatingExpenses)}</span>
                     </div>
                   </div>
                 )}
               </div>
+
+              <div className={`p-4 rounded-lg mb-4 ${reportData.operatingProfit >= 0 ? 'bg-green-50' : 'bg-red-50'}`}>
+                <div className="flex justify-between items-center">
+                  <span className="text-lg font-bold">Operating {reportData.operatingProfit >= 0 ? 'Profit' : 'Loss'}</span>
+                  <span className={`text-xl font-bold ${reportData.operatingProfit >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                    {formatCurrency(Math.abs(reportData.operatingProfit))}
+                  </span>
+                </div>
+              </div>
+
+              {reportData.nonOperatingExpenses.length > 0 && (
+                <div className="border-b pb-4">
+                  <h3 className="text-lg font-semibold text-red-700 mb-3">Non-Operating Expenses</h3>
+                  <div className="space-y-2">
+                    {reportData.nonOperatingExpenses.map(account => (
+                      <div key={account.id} className="flex justify-between">
+                        <span className="text-slate-600">{account.name}</span>
+                        <span className="font-medium">{formatCurrency(account.balance)}</span>
+                      </div>
+                    ))}
+                    <div className="flex justify-between font-semibold border-t pt-2">
+                      <span>Total Non-Operating Expenses</span>
+                      <span className="text-red-600">{formatCurrency(reportData.totalNonOperatingExpenses)}</span>
+                    </div>
+                  </div>
+                </div>
+              )}
 
               <div className={`p-4 rounded-lg ${reportData.netIncome >= 0 ? 'bg-green-50' : 'bg-red-50'}`}>
                 <div className="flex justify-between items-center">
@@ -853,7 +1133,27 @@ export function AccountReports() {
         ]
         
         return (
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <>
+            {reportData.hasAbnormalBalances && (
+              <div className="mb-4 p-3 bg-orange-50 border border-orange-200 rounded-lg">
+                <p className="text-orange-700 text-sm font-medium mb-1">
+                  ⓘ Opening Balance Equity Auto-Calculated
+                </p>
+                <p className="text-orange-600 text-xs">
+                  Some liability accounts had debit balances indicating missing opening entries. 
+                  An adjustment of {formatCurrency(reportData.openingBalanceEquityAdjustment)} was applied to Opening Balance Equity.
+                  Consider adding proper opening balance journal entries for accuracy.
+                </p>
+              </div>
+            )}
+            {reportData.hasImbalance && (
+              <div className="mb-4 p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
+                <p className="text-yellow-700 text-sm font-medium">
+                  ⚠️ Balance Sheet does not balance. Check for missing entries or opening balances.
+                </p>
+              </div>
+            )}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             {/* Left - Data */}
             <div className="space-y-6">
               <div className="border-b pb-4">
@@ -863,9 +1163,14 @@ export function AccountReports() {
                 ) : (
                   <div className="space-y-2">
                     {reportData.assets.map(account => (
-                      <div key={account.id} className="flex justify-between">
-                        <span className="text-slate-600">{account.name}</span>
-                        <span className="font-medium">{formatCurrency(account.balance)}</span>
+                      <div key={account.id} className="flex justify-between items-center">
+                        <span className={account.hasAbnormalBalance ? 'text-red-600' : 'text-slate-600'}>
+                          {account.name}
+                          {account.hasAbnormalBalance && <span className="ml-1 text-xs">⚠️</span>}
+                        </span>
+                        <span className={`font-medium ${account.hasAbnormalBalance ? 'text-red-600' : ''}`}>
+                          {formatCurrency(account.balance)}
+                        </span>
                       </div>
                     ))}
                     <div className="flex justify-between font-semibold border-t pt-2">
@@ -883,9 +1188,14 @@ export function AccountReports() {
                 ) : (
                   <div className="space-y-2">
                     {reportData.liabilities.map(account => (
-                      <div key={account.id} className="flex justify-between">
-                        <span className="text-slate-600">{account.name}</span>
-                        <span className="font-medium">{formatCurrency(account.balance)}</span>
+                      <div key={account.id} className="flex justify-between items-center">
+                        <span className={account.hasAbnormalBalance ? 'text-red-600' : 'text-slate-600'}>
+                          {account.name}
+                          {account.hasAbnormalBalance && <span className="ml-1 text-xs">⚠️</span>}
+                        </span>
+                        <span className={`font-medium ${account.hasAbnormalBalance ? 'text-red-600' : ''}`}>
+                          {formatCurrency(account.balance)}
+                        </span>
                       </div>
                     ))}
                     <div className="flex justify-between font-semibold border-t pt-2">
@@ -905,6 +1215,15 @@ export function AccountReports() {
                       <span className="font-medium">{formatCurrency(account.balance)}</span>
                     </div>
                   ))}
+                  {reportData.openingBalanceEquityAdjustment !== 0 && (
+                    <div className="flex justify-between">
+                      <span className="text-slate-600">
+                        Opening Balance Equity
+                        <span className="ml-1 text-xs text-orange-500" title="Auto-calculated from missing opening entries">ⓘ</span>
+                      </span>
+                      <span className="font-medium text-orange-600">{formatCurrency(reportData.openingBalanceEquityAdjustment)}</span>
+                    </div>
+                  )}
                   <div className="flex justify-between">
                     <span className="text-slate-600">Retained Earnings:</span>
                   </div>
@@ -935,11 +1254,19 @@ export function AccountReports() {
                   <span className="text-xl font-bold">{formatCurrency(reportData.totalLiabilities + reportData.totalEquity)}</span>
                 </div>
                 <div className="mt-2 text-sm">
-                  <span className="text-green-600">✓ Balance sheet is balanced</span>
-                  {reportData.hasImbalance && (
+                  {!reportData.hasImbalance ? (
+                    <span className="text-green-600">✓ Balance sheet is balanced</span>
+                  ) : (
+                    <span className="text-red-600">❌ Balance sheet is NOT balanced (Assets: {formatCurrency(reportData.totalAssets)} ≠ L+E: {formatCurrency(reportData.totalLiabilities + reportData.totalEquity)})</span>
+                  )}
+                  {reportData.hasAbnormalBalances && (
                     <p className="text-orange-600 text-xs mt-1">
-                      Note: Opening Retained Earnings of {formatCurrency(reportData.openingRetainedEarnings)} was calculated to balance. 
-                      This may indicate missing opening balance entries.
+                      Note: Some accounts had abnormal balances. Opening Balance Equity of {formatCurrency(reportData.openingBalanceEquityAdjustment)} was auto-calculated to account for missing opening entries.
+                    </p>
+                  )}
+                  {reportData.openingRetainedEarnings !== 0 && !reportData.hasAbnormalBalances && (
+                    <p className="text-slate-500 text-xs mt-1">
+                      Note: Opening Retained Earnings of {formatCurrency(reportData.openingRetainedEarnings)} was calculated to balance.
                     </p>
                   )}
                 </div>
@@ -990,6 +1317,7 @@ export function AccountReports() {
               )}
             </div>
           </div>
+          </>
         )
 
       case 'cash-flow':
@@ -1013,32 +1341,128 @@ export function AccountReports() {
 
               <div className="space-y-4">
                 <div className="p-4 border rounded-lg">
-                  <h4 className="font-semibold text-blue-700 mb-2">Operating Activities</h4>
-                  <div className="flex justify-between">
-                    <span>Net cash from operations</span>
-                    <span className={reportData.operatingActivities >= 0 ? 'text-green-600' : 'text-red-600'}>
-                      {formatCurrency(reportData.operatingActivities)}
-                    </span>
+                  <h4 className="font-semibold text-blue-700 mb-3">Operating Activities</h4>
+                  <div className="space-y-2 text-sm">
+                    {reportData.operatingInflows > 0 && (
+                      <>
+                        <div className="text-slate-500 font-medium">Cash Inflows:</div>
+                        {reportData.cashMovements.filter(m => m.category === 'operating' && m.isInflow).map((m, i) => (
+                          <div key={i} className="flex justify-between pl-4">
+                            <span className="text-slate-600">{m.description}</span>
+                            <span className="text-green-600">{formatCurrency(m.amount)}</span>
+                          </div>
+                        ))}
+                        <div className="flex justify-between pl-4 font-medium border-t pt-1">
+                          <span>Total cash inflows</span>
+                          <span className="text-green-600">{formatCurrency(reportData.operatingInflows)}</span>
+                        </div>
+                      </>
+                    )}
+                    {reportData.operatingOutflows > 0 && (
+                      <>
+                        <div className="text-slate-500 font-medium mt-2">Cash Outflows:</div>
+                        {reportData.cashMovements.filter(m => m.category === 'operating' && !m.isInflow).map((m, i) => (
+                          <div key={i} className="flex justify-between pl-4">
+                            <span className="text-slate-600">{m.description}</span>
+                            <span className="text-red-600">({formatCurrency(Math.abs(m.amount))})</span>
+                          </div>
+                        ))}
+                        <div className="flex justify-between pl-4 font-medium border-t pt-1">
+                          <span>Total cash outflows</span>
+                          <span className="text-red-600">({formatCurrency(reportData.operatingOutflows)})</span>
+                        </div>
+                      </>
+                    )}
+                    <div className="flex justify-between font-semibold border-t pt-2 mt-2">
+                      <span>Net cash from operations</span>
+                      <span className={reportData.operatingActivities >= 0 ? 'text-green-600' : 'text-red-600'}>
+                        {formatCurrency(reportData.operatingActivities)}
+                      </span>
+                    </div>
                   </div>
                 </div>
 
                 <div className="p-4 border rounded-lg">
-                  <h4 className="font-semibold text-purple-700 mb-2">Investing Activities</h4>
-                  <div className="flex justify-between">
-                    <span>Net cash from investing</span>
-                    <span className={reportData.investingActivities >= 0 ? 'text-green-600' : 'text-red-600'}>
-                      {formatCurrency(reportData.investingActivities)}
-                    </span>
+                  <h4 className="font-semibold text-purple-700 mb-3">Investing Activities</h4>
+                  <div className="space-y-2 text-sm">
+                    {reportData.investingInflows > 0 && (
+                      <>
+                        <div className="text-slate-500 font-medium">Cash Inflows:</div>
+                        {reportData.cashMovements.filter(m => m.category === 'investing' && m.isInflow).map((m, i) => (
+                          <div key={i} className="flex justify-between pl-4">
+                            <span className="text-slate-600">{m.description}</span>
+                            <span className="text-green-600">{formatCurrency(m.amount)}</span>
+                          </div>
+                        ))}
+                        <div className="flex justify-between pl-4 font-medium border-t pt-1">
+                          <span>Total cash inflows</span>
+                          <span className="text-green-600">{formatCurrency(reportData.investingInflows)}</span>
+                        </div>
+                      </>
+                    )}
+                    {reportData.investingOutflows > 0 && (
+                      <>
+                        <div className="text-slate-500 font-medium mt-2">Cash Outflows:</div>
+                        {reportData.cashMovements.filter(m => m.category === 'investing' && !m.isInflow).map((m, i) => (
+                          <div key={i} className="flex justify-between pl-4">
+                            <span className="text-slate-600">{m.description}</span>
+                            <span className="text-red-600">({formatCurrency(Math.abs(m.amount))})</span>
+                          </div>
+                        ))}
+                        <div className="flex justify-between pl-4 font-medium border-t pt-1">
+                          <span>Total cash outflows</span>
+                          <span className="text-red-600">({formatCurrency(reportData.investingOutflows)})</span>
+                        </div>
+                      </>
+                    )}
+                    <div className="flex justify-between font-semibold border-t pt-2 mt-2">
+                      <span>Net cash from investing</span>
+                      <span className={reportData.investingActivities >= 0 ? 'text-green-600' : 'text-red-600'}>
+                        {formatCurrency(reportData.investingActivities)}
+                      </span>
+                    </div>
                   </div>
                 </div>
 
                 <div className="p-4 border rounded-lg">
-                  <h4 className="font-semibold text-orange-700 mb-2">Financing Activities</h4>
-                  <div className="flex justify-between">
-                    <span>Net cash from financing</span>
-                    <span className={reportData.financingActivities >= 0 ? 'text-green-600' : 'text-red-600'}>
-                      {formatCurrency(reportData.financingActivities)}
-                    </span>
+                  <h4 className="font-semibold text-orange-700 mb-3">Financing Activities</h4>
+                  <div className="space-y-2 text-sm">
+                    {reportData.financingInflows > 0 && (
+                      <>
+                        <div className="text-slate-500 font-medium">Cash Inflows:</div>
+                        {reportData.cashMovements.filter(m => m.category === 'financing' && m.isInflow).map((m, i) => (
+                          <div key={i} className="flex justify-between pl-4">
+                            <span className="text-slate-600">{m.description}</span>
+                            <span className="text-green-600">{formatCurrency(m.amount)}</span>
+                          </div>
+                        ))}
+                        <div className="flex justify-between pl-4 font-medium border-t pt-1">
+                          <span>Total cash inflows</span>
+                          <span className="text-green-600">{formatCurrency(reportData.financingInflows)}</span>
+                        </div>
+                      </>
+                    )}
+                    {reportData.financingOutflows > 0 && (
+                      <>
+                        <div className="text-slate-500 font-medium mt-2">Cash Outflows:</div>
+                        {reportData.cashMovements.filter(m => m.category === 'financing' && !m.isInflow).map((m, i) => (
+                          <div key={i} className="flex justify-between pl-4">
+                            <span className="text-slate-600">{m.description}</span>
+                            <span className="text-red-600">({formatCurrency(Math.abs(m.amount))})</span>
+                          </div>
+                        ))}
+                        <div className="flex justify-between pl-4 font-medium border-t pt-1">
+                          <span>Total cash outflows</span>
+                          <span className="text-red-600">({formatCurrency(reportData.financingOutflows)})</span>
+                        </div>
+                      </>
+                    )}
+                    <div className="flex justify-between font-semibold border-t pt-2 mt-2">
+                      <span>Net cash from financing</span>
+                      <span className={reportData.financingActivities >= 0 ? 'text-green-600' : 'text-red-600'}>
+                        {formatCurrency(reportData.financingActivities)}
+                      </span>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -1102,6 +1526,24 @@ export function AccountReports() {
         }))
         
         return (
+          <>
+            {reportData.hasAbnormalBalances && (
+              <div className="mb-4 p-3 bg-orange-50 border border-orange-200 rounded-lg">
+                <p className="text-orange-700 text-sm font-medium mb-2">
+                  ⚠️ Abnormal Balances Detected
+                </p>
+                <div className="text-orange-600 text-xs space-y-1">
+                  {reportData.abnormalBalances.map(a => (
+                    <div key={a.id}>
+                      <strong>{a.code} - {a.name}:</strong> {a.abnormalReason}
+                    </div>
+                  ))}
+                </div>
+                <p className="text-orange-500 text-xs mt-2 italic">
+                  These balances are shown as recorded. Consider adding opening balance entries to correct.
+                </p>
+              </div>
+            )}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             {/* Left - Data */}
             <div className="space-y-4">
@@ -1116,11 +1558,20 @@ export function AccountReports() {
                 </thead>
                 <tbody>
                   {reportData.balances.map(account => (
-                    <tr key={account.id} className="border-b">
+                    <tr key={account.id} className={`border-b ${account.hasAbnormalBalance ? 'bg-orange-50' : ''}`}>
                       <td className="py-2 px-3 font-mono text-sm">{account.code}</td>
-                      <td className="py-2 px-3">{account.name}</td>
-                      <td className="py-2 px-3 text-right">{account.displayDebit > 0 ? formatCurrency(account.displayDebit) : '-'}</td>
-                      <td className="py-2 px-3 text-right">{account.displayCredit > 0 ? formatCurrency(account.displayCredit) : '-'}</td>
+                      <td className="py-2 px-3">
+                        {account.name}
+                        {account.hasAbnormalBalance && (
+                          <span className="ml-1 text-orange-500" title={account.abnormalReason}>⚠️</span>
+                        )}
+                      </td>
+                      <td className={`py-2 px-3 text-right ${account.hasAbnormalBalance && account.displayDebit > 0 ? 'text-orange-600 font-medium' : ''}`}>
+                        {account.displayDebit > 0 ? formatCurrency(account.displayDebit) : '-'}
+                      </td>
+                      <td className={`py-2 px-3 text-right ${account.hasAbnormalBalance && account.displayCredit > 0 ? 'text-orange-600 font-medium' : ''}`}>
+                        {account.displayCredit > 0 ? formatCurrency(account.displayCredit) : '-'}
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -1172,6 +1623,7 @@ export function AccountReports() {
               </div>
             </div>
           </div>
+          </>
         )
 
       case 'general-ledger':
@@ -1278,65 +1730,176 @@ export function AccountReports() {
         )
 
       case 'expense-analysis':
-        const expensePieData = reportData.expenses.map((e, i) => ({ name: e.name, value: e.amount, fill: PIE_COLORS[i % PIE_COLORS.length] }))
+        const allCostsPieData = [
+          ...reportData.cogs.map((c, i) => ({ name: c.name, value: c.amount, fill: '#f97316' })),
+          ...reportData.expenses.map((e, i) => ({ name: e.name, value: e.amount, fill: PIE_COLORS[i % PIE_COLORS.length] }))
+        ]
+        const hasNoCosts = reportData.cogs.length === 0 && reportData.expenses.length === 0
         
         return (
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             {/* Left - Data */}
             <div className="space-y-4">
-              {reportData.expenses.length === 0 ? (
-                <p className="text-slate-500 text-center py-8">No expenses recorded in this period</p>
+              {hasNoCosts ? (
+                <p className="text-slate-500 text-center py-8">No costs recorded in this period</p>
               ) : (
                 <>
-                  <div className="space-y-3">
-                    {reportData.expenses.map(expense => {
-                      const percentage = (expense.amount / reportData.totalExpenses) * 100
-                      return (
-                        <div key={expense.id} className="space-y-1">
-                          <div className="flex justify-between text-sm">
-                            <span>{expense.name}</span>
-                            <span className="font-medium">{formatCurrency(expense.amount)} ({percentage.toFixed(1)}%)</span>
-                          </div>
-                          <div className="w-full bg-slate-200 rounded-full h-2">
-                            <div 
-                              className="bg-red-500 h-2 rounded-full" 
-                              style={{ width: `${percentage}%` }}
-                            />
-                          </div>
-                        </div>
-                      )
-                    })}
+                  {/* Revenue Reference */}
+                  <div className="p-3 bg-blue-50 rounded-lg flex justify-between items-center">
+                    <span className="text-sm text-blue-700">Total Revenue (Reference)</span>
+                    <span className="font-bold text-blue-600">{formatCurrency(reportData.totalRevenue)}</span>
                   </div>
-                  <div className="p-4 bg-red-50 rounded-lg flex justify-between">
-                    <span className="font-bold">Total Expenses</span>
-                    <span className="font-bold text-red-600">{formatCurrency(reportData.totalExpenses)}</span>
+
+                  {/* Cost of Sales / COGS Section */}
+                  {reportData.cogs.length > 0 && (
+                    <div className="border rounded-lg p-4">
+                      <h4 className="font-semibold text-orange-700 mb-3">Cost of Sales</h4>
+                      <table className="w-full text-sm">
+                        <thead>
+                          <tr className="text-slate-500 border-b">
+                            <th className="text-left py-2">Account</th>
+                            <th className="text-right py-2">Amount</th>
+                            <th className="text-right py-2">% of Revenue</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {reportData.cogs.map(cost => (
+                            <tr key={cost.id} className="border-b">
+                              <td className="py-2">{cost.name}</td>
+                              <td className="py-2 text-right font-medium">{formatCurrency(cost.amount)}</td>
+                              <td className="py-2 text-right text-orange-600">
+                                {reportData.totalRevenue > 0 ? ((cost.amount / reportData.totalRevenue) * 100).toFixed(1) : 0}%
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                        <tfoot>
+                          <tr className="bg-orange-50 font-semibold">
+                            <td className="py-2">Total COGS</td>
+                            <td className="py-2 text-right text-orange-600">{formatCurrency(reportData.totalCOGS)}</td>
+                            <td className="py-2 text-right text-orange-600">
+                              {reportData.totalRevenue > 0 ? ((reportData.totalCOGS / reportData.totalRevenue) * 100).toFixed(1) : 0}%
+                            </td>
+                          </tr>
+                        </tfoot>
+                      </table>
+                      <div className="mt-2 p-2 bg-green-50 rounded flex justify-between text-sm">
+                        <span className="text-green-700">Gross Profit</span>
+                        <span className="font-semibold text-green-600">{formatCurrency(reportData.grossProfit)}</span>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Operating Expenses Section */}
+                  {reportData.expenses.length > 0 && (
+                    <div className="border rounded-lg p-4">
+                      <h4 className="font-semibold text-red-700 mb-3">Operating Expenses</h4>
+                      <table className="w-full text-sm">
+                        <thead>
+                          <tr className="text-slate-500 border-b">
+                            <th className="text-left py-2">Account</th>
+                            <th className="text-right py-2">Amount</th>
+                            <th className="text-right py-2">% of Revenue</th>
+                            <th className="text-right py-2">% of Total</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {reportData.expenses.map(expense => (
+                            <tr key={expense.id} className="border-b">
+                              <td className="py-2">{expense.name}</td>
+                              <td className="py-2 text-right font-medium">{formatCurrency(expense.amount)}</td>
+                              <td className="py-2 text-right text-slate-600">
+                                {reportData.totalRevenue > 0 ? ((expense.amount / reportData.totalRevenue) * 100).toFixed(1) : 0}%
+                              </td>
+                              <td className="py-2 text-right text-slate-600">
+                                {reportData.totalCosts > 0 ? ((expense.amount / reportData.totalCosts) * 100).toFixed(1) : 0}%
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                        <tfoot>
+                          <tr className="bg-red-50 font-semibold">
+                            <td className="py-2">Total Operating Expenses</td>
+                            <td className="py-2 text-right text-red-600">{formatCurrency(reportData.totalExpenses)}</td>
+                            <td className="py-2 text-right text-red-600">
+                              {reportData.totalRevenue > 0 ? ((reportData.totalExpenses / reportData.totalRevenue) * 100).toFixed(1) : 0}%
+                            </td>
+                            <td className="py-2 text-right text-red-600">
+                              {reportData.totalCosts > 0 ? ((reportData.totalExpenses / reportData.totalCosts) * 100).toFixed(1) : 0}%
+                            </td>
+                          </tr>
+                        </tfoot>
+                      </table>
+                    </div>
+                  )}
+
+                  {/* Combined Total */}
+                  <div className="p-4 bg-slate-100 rounded-lg">
+                    <div className="flex justify-between items-center mb-2">
+                      <span className="font-bold">Total Costs (COGS + Expenses)</span>
+                      <span className="font-bold text-lg">{formatCurrency(reportData.totalCosts)}</span>
+                    </div>
+                    <div className="flex justify-between text-sm text-slate-600">
+                      <span>As % of Revenue</span>
+                      <span className={reportData.totalCosts > reportData.totalRevenue ? 'text-red-600 font-medium' : 'text-green-600 font-medium'}>
+                        {reportData.totalRevenue > 0 ? ((reportData.totalCosts / reportData.totalRevenue) * 100).toFixed(1) : 0}%
+                        {reportData.totalCosts > reportData.totalRevenue && ' (Exceeds Revenue!)'}
+                      </span>
+                    </div>
                   </div>
                 </>
               )}
             </div>
 
-            {/* Right - Chart */}
-            {expensePieData.length > 0 && (
-              <div className="bg-slate-50 rounded-lg p-4">
-                <h4 className="text-sm font-medium text-slate-600 mb-3">Expense Distribution</h4>
-                <ResponsiveContainer width="100%" height={300}>
-                  <PieChart>
-                    <Pie
-                      data={expensePieData}
-                      cx="50%"
-                      cy="50%"
-                      outerRadius={100}
-                      dataKey="value"
-                      label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
-                      labelLine={true}
-                    >
-                      {expensePieData.map((entry, index) => (
-                        <Cell key={`cell-${index}`} fill={entry.fill} />
-                      ))}
-                    </Pie>
-                    <Tooltip formatter={(value) => formatCurrency(value)} />
-                  </PieChart>
-                </ResponsiveContainer>
+            {/* Right - Charts */}
+            {allCostsPieData.length > 0 && (
+              <div className="space-y-6">
+                {/* Operating Expenses Bar Chart */}
+                {reportData.expenses.length > 0 && (
+                  <div className="bg-slate-50 rounded-lg p-4">
+                    <h4 className="text-sm font-medium text-slate-600 mb-3">Operating Expenses Breakdown</h4>
+                    <ResponsiveContainer width="100%" height={250}>
+                      <BarChart data={reportData.expenses.map((e, i) => ({ 
+                        name: e.name.length > 15 ? e.name.substring(0, 15) + '...' : e.name, 
+                        value: e.amount,
+                        fill: PIE_COLORS[i % PIE_COLORS.length]
+                      }))}>
+                        <CartesianGrid strokeDasharray="3 3" />
+                        <XAxis dataKey="name" tick={{ fontSize: 10, angle: -45, textAnchor: 'end' }} height={80} />
+                        <YAxis tick={{ fontSize: 10 }} tickFormatter={(v) => `$${(v/1000).toFixed(0)}k`} />
+                        <Tooltip formatter={(value) => formatCurrency(value)} />
+                        <Bar dataKey="value">
+                          {reportData.expenses.map((entry, index) => (
+                            <Cell key={`cell-${index}`} fill={PIE_COLORS[index % PIE_COLORS.length]} />
+                          ))}
+                        </Bar>
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+                )}
+
+                {/* Cost Distribution Pie Chart */}
+                <div className="bg-slate-50 rounded-lg p-4">
+                  <h4 className="text-sm font-medium text-slate-600 mb-3">Total Cost Distribution</h4>
+                  <ResponsiveContainer width="100%" height={250}>
+                    <PieChart>
+                      <Pie
+                        data={allCostsPieData}
+                        cx="50%"
+                        cy="50%"
+                        outerRadius={80}
+                        dataKey="value"
+                        label={({ name, percent }) => `${name.length > 12 ? name.substring(0,12) + '...' : name} ${(percent * 100).toFixed(0)}%`}
+                        labelLine={true}
+                      >
+                        {allCostsPieData.map((entry, index) => (
+                          <Cell key={`cell-${index}`} fill={entry.fill} />
+                        ))}
+                      </Pie>
+                      <Tooltip formatter={(value) => formatCurrency(value)} />
+                    </PieChart>
+                  </ResponsiveContainer>
+                </div>
               </div>
             )}
           </div>
@@ -1416,52 +1979,144 @@ export function AccountReports() {
           { name: '31-60', value: reportData.aging.days30, fill: '#fbbf24' },
           { name: '61-90', value: reportData.aging.days60, fill: CHART_COLORS.expenses },
           { name: '91-120', value: reportData.aging.days90, fill: '#f97316' },
-          { name: '120+', value: reportData.aging.over90, fill: CHART_COLORS.liabilities }
+          { name: '120+', value: reportData.aging.over120, fill: CHART_COLORS.liabilities }
         ]
         
         return (
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            {/* Left - Data */}
-            <div className="space-y-4">
-              <table className="w-full">
-                <thead>
-                  <tr className="bg-slate-100">
-                    <th className="text-left py-2 px-3">Aging Period</th>
-                    <th className="text-right py-2 px-3">Amount</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr className="border-b"><td className="py-2 px-3">Current (0-30 days)</td><td className="py-2 px-3 text-right">{formatCurrency(reportData.aging.current)}</td></tr>
-                  <tr className="border-b"><td className="py-2 px-3">31-60 days</td><td className="py-2 px-3 text-right">{formatCurrency(reportData.aging.days30)}</td></tr>
-                  <tr className="border-b"><td className="py-2 px-3">61-90 days</td><td className="py-2 px-3 text-right">{formatCurrency(reportData.aging.days60)}</td></tr>
-                  <tr className="border-b"><td className="py-2 px-3">91-120 days</td><td className="py-2 px-3 text-right">{formatCurrency(reportData.aging.days90)}</td></tr>
-                  <tr className="border-b"><td className="py-2 px-3">Over 120 days</td><td className="py-2 px-3 text-right text-red-600">{formatCurrency(reportData.aging.over90)}</td></tr>
-                </tbody>
-                <tfoot>
-                  <tr className="bg-slate-100 font-bold">
-                    <td className="py-2 px-3">Total Payable</td>
-                    <td className="py-2 px-3 text-right">{formatCurrency(reportData.totalPayable)}</td>
-                  </tr>
-                </tfoot>
-              </table>
-            </div>
-
-            {/* Right - Chart */}
-            <div className="bg-slate-50 rounded-lg p-4">
-              <h4 className="text-sm font-medium text-slate-600 mb-3">Aging Distribution</h4>
-              <ResponsiveContainer width="100%" height={250}>
-                <BarChart data={apAgingBarData} layout="vertical">
-                  <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis type="number" tick={{ fontSize: 12 }} tickFormatter={(v) => `$${(v/1000).toFixed(0)}k`} />
-                  <YAxis type="category" dataKey="name" tick={{ fontSize: 12 }} width={60} />
-                  <Tooltip formatter={(value) => formatCurrency(value)} />
-                  <Bar dataKey="value">
-                    {apAgingBarData.map((entry, index) => (
-                      <Cell key={`cell-${index}`} fill={entry.fill} />
+          <div className="space-y-6">
+            {/* Transaction Detail */}
+            {reportData.transactions && reportData.transactions.length > 0 && (
+              <div className="border rounded-lg p-4">
+                <h4 className="font-semibold text-slate-700 mb-3">Transaction History</h4>
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="bg-slate-100 border-b">
+                      <th className="text-left py-2 px-3">Date</th>
+                      <th className="text-left py-2 px-3">Vendor/Description</th>
+                      <th className="text-right py-2 px-3">Purchase</th>
+                      <th className="text-right py-2 px-3">Payment</th>
+                      <th className="text-right py-2 px-3">Balance</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {reportData.transactions.map((tx, i) => (
+                      <tr key={i} className="border-b">
+                        <td className="py-2 px-3">{formatDate(tx.date)}</td>
+                        <td className="py-2 px-3">{tx.vendor}</td>
+                        <td className="py-2 px-3 text-right text-red-600">
+                          {tx.credit > 0 ? formatCurrency(tx.credit) : '-'}
+                        </td>
+                        <td className="py-2 px-3 text-right text-green-600">
+                          {tx.debit > 0 ? `(${formatCurrency(tx.debit)})` : '-'}
+                        </td>
+                        <td className="py-2 px-3 text-right font-medium">
+                          {formatCurrency(Math.abs(tx.balance))}
+                        </td>
+                      </tr>
                     ))}
-                  </Bar>
-                </BarChart>
-              </ResponsiveContainer>
+                  </tbody>
+                  <tfoot>
+                    <tr className="bg-slate-100 font-bold">
+                      <td colSpan="4" className="py-2 px-3 text-right">Current Balance</td>
+                      <td className="py-2 px-3 text-right">{formatCurrency(reportData.totalPayable)}</td>
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+            )}
+
+            {/* Outstanding Purchases Detail */}
+            {reportData.outstandingPurchases && reportData.outstandingPurchases.length > 0 && (
+              <div className="border rounded-lg p-4">
+                <h4 className="font-semibold text-slate-700 mb-3">Outstanding Purchases</h4>
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="bg-slate-100 border-b">
+                      <th className="text-left py-2 px-3">Date</th>
+                      <th className="text-left py-2 px-3">Vendor</th>
+                      <th className="text-right py-2 px-3">Amount</th>
+                      <th className="text-right py-2 px-3">Age (Days)</th>
+                      <th className="text-right py-2 px-3">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {reportData.outstandingPurchases.map((purchase, i) => {
+                      let ageCategory = 'Current'
+                      let ageColor = 'text-green-600'
+                      if (purchase.age > 120) {
+                        ageCategory = 'Over 120 days'
+                        ageColor = 'text-red-600'
+                      } else if (purchase.age > 90) {
+                        ageCategory = '91-120 days'
+                        ageColor = 'text-orange-600'
+                      } else if (purchase.age > 60) {
+                        ageCategory = '61-90 days'
+                        ageColor = 'text-orange-500'
+                      } else if (purchase.age > 30) {
+                        ageCategory = '31-60 days'
+                        ageColor = 'text-yellow-600'
+                      }
+                      
+                      return (
+                        <tr key={i} className="border-b">
+                          <td className="py-2 px-3">{formatDate(purchase.date)}</td>
+                          <td className="py-2 px-3">{purchase.vendor}</td>
+                          <td className="py-2 px-3 text-right font-medium">{formatCurrency(purchase.amount)}</td>
+                          <td className="py-2 px-3 text-right">{purchase.age}</td>
+                          <td className={`py-2 px-3 text-right font-medium ${ageColor}`}>{ageCategory}</td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            {/* Aging Summary */}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              {/* Left - Aging Table */}
+              <div className="space-y-4">
+                <h4 className="font-semibold text-slate-700">Aging Summary</h4>
+                <table className="w-full">
+                  <thead>
+                    <tr className="bg-slate-100">
+                      <th className="text-left py-2 px-3">Aging Period</th>
+                      <th className="text-right py-2 px-3">Amount</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr className="border-b"><td className="py-2 px-3">Current (0-30 days)</td><td className="py-2 px-3 text-right">{formatCurrency(reportData.aging.current)}</td></tr>
+                    <tr className="border-b"><td className="py-2 px-3">31-60 days</td><td className="py-2 px-3 text-right">{formatCurrency(reportData.aging.days30)}</td></tr>
+                    <tr className="border-b"><td className="py-2 px-3">61-90 days</td><td className="py-2 px-3 text-right">{formatCurrency(reportData.aging.days60)}</td></tr>
+                    <tr className="border-b"><td className="py-2 px-3">91-120 days</td><td className="py-2 px-3 text-right">{formatCurrency(reportData.aging.days90)}</td></tr>
+                    <tr className="border-b"><td className="py-2 px-3">Over 120 days</td><td className="py-2 px-3 text-right text-red-600">{formatCurrency(reportData.aging.over120)}</td></tr>
+                  </tbody>
+                  <tfoot>
+                    <tr className="bg-slate-100 font-bold">
+                      <td className="py-2 px-3">Total Payable</td>
+                      <td className="py-2 px-3 text-right">{formatCurrency(reportData.totalPayable)}</td>
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+
+              {/* Right - Chart */}
+              <div className="bg-slate-50 rounded-lg p-4">
+                <h4 className="text-sm font-medium text-slate-600 mb-3">Aging Distribution</h4>
+                <ResponsiveContainer width="100%" height={250}>
+                  <BarChart data={apAgingBarData} layout="vertical">
+                    <CartesianGrid strokeDasharray="3 3" />
+                    <XAxis type="number" tick={{ fontSize: 12 }} tickFormatter={(v) => `$${(v/1000).toFixed(0)}k`} />
+                    <YAxis type="category" dataKey="name" tick={{ fontSize: 12 }} width={60} />
+                    <Tooltip formatter={(value) => formatCurrency(value)} />
+                    <Bar dataKey="value">
+                      {apAgingBarData.map((entry, index) => (
+                        <Cell key={`cell-${index}`} fill={entry.fill} />
+                      ))}
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
             </div>
           </div>
         )
@@ -1475,52 +2130,144 @@ export function AccountReports() {
           { name: '31-60', value: reportData.aging.days30, fill: '#fbbf24' },
           { name: '61-90', value: reportData.aging.days60, fill: CHART_COLORS.expenses },
           { name: '91-120', value: reportData.aging.days90, fill: '#f97316' },
-          { name: '120+', value: reportData.aging.over90, fill: CHART_COLORS.liabilities }
+          { name: '120+', value: reportData.aging.over120, fill: CHART_COLORS.liabilities }
         ]
         
         return (
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            {/* Left - Data */}
-            <div className="space-y-4">
-              <table className="w-full">
-                <thead>
-                  <tr className="bg-slate-100">
-                    <th className="text-left py-2 px-3">Aging Period</th>
-                    <th className="text-right py-2 px-3">Amount</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr className="border-b"><td className="py-2 px-3">Current (0-30 days)</td><td className="py-2 px-3 text-right">{formatCurrency(reportData.aging.current)}</td></tr>
-                  <tr className="border-b"><td className="py-2 px-3">31-60 days</td><td className="py-2 px-3 text-right">{formatCurrency(reportData.aging.days30)}</td></tr>
-                  <tr className="border-b"><td className="py-2 px-3">61-90 days</td><td className="py-2 px-3 text-right">{formatCurrency(reportData.aging.days60)}</td></tr>
-                  <tr className="border-b"><td className="py-2 px-3">91-120 days</td><td className="py-2 px-3 text-right">{formatCurrency(reportData.aging.days90)}</td></tr>
-                  <tr className="border-b"><td className="py-2 px-3">Over 120 days</td><td className="py-2 px-3 text-right text-red-600">{formatCurrency(reportData.aging.over90)}</td></tr>
-                </tbody>
-                <tfoot>
-                  <tr className="bg-slate-100 font-bold">
-                    <td className="py-2 px-3">Total Receivable</td>
-                    <td className="py-2 px-3 text-right">{formatCurrency(reportData.totalReceivable)}</td>
-                  </tr>
-                </tfoot>
-              </table>
-            </div>
-
-            {/* Right - Chart */}
-            <div className="bg-slate-50 rounded-lg p-4">
-              <h4 className="text-sm font-medium text-slate-600 mb-3">Aging Distribution</h4>
-              <ResponsiveContainer width="100%" height={250}>
-                <BarChart data={arAgingBarData} layout="vertical">
-                  <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis type="number" tick={{ fontSize: 12 }} tickFormatter={(v) => `$${(v/1000).toFixed(0)}k`} />
-                  <YAxis type="category" dataKey="name" tick={{ fontSize: 12 }} width={60} />
-                  <Tooltip formatter={(value) => formatCurrency(value)} />
-                  <Bar dataKey="value">
-                    {arAgingBarData.map((entry, index) => (
-                      <Cell key={`cell-${index}`} fill={entry.fill} />
+          <div className="space-y-6">
+            {/* Transaction Detail */}
+            {reportData.transactions && reportData.transactions.length > 0 && (
+              <div className="border rounded-lg p-4">
+                <h4 className="font-semibold text-slate-700 mb-3">Transaction History</h4>
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="bg-slate-100 border-b">
+                      <th className="text-left py-2 px-3">Date</th>
+                      <th className="text-left py-2 px-3">Customer/Description</th>
+                      <th className="text-right py-2 px-3">Invoice</th>
+                      <th className="text-right py-2 px-3">Collection</th>
+                      <th className="text-right py-2 px-3">Balance</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {reportData.transactions.map((tx, i) => (
+                      <tr key={i} className="border-b">
+                        <td className="py-2 px-3">{formatDate(tx.date)}</td>
+                        <td className="py-2 px-3">{tx.customer}</td>
+                        <td className="py-2 px-3 text-right text-green-600">
+                          {tx.debit > 0 ? formatCurrency(tx.debit) : '-'}
+                        </td>
+                        <td className="py-2 px-3 text-right text-blue-600">
+                          {tx.credit > 0 ? `(${formatCurrency(tx.credit)})` : '-'}
+                        </td>
+                        <td className="py-2 px-3 text-right font-medium">
+                          {formatCurrency(Math.abs(tx.balance))}
+                        </td>
+                      </tr>
                     ))}
-                  </Bar>
-                </BarChart>
-              </ResponsiveContainer>
+                  </tbody>
+                  <tfoot>
+                    <tr className="bg-slate-100 font-bold">
+                      <td colSpan="4" className="py-2 px-3 text-right">Current Balance</td>
+                      <td className="py-2 px-3 text-right">{formatCurrency(reportData.totalReceivable)}</td>
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+            )}
+
+            {/* Outstanding Invoices Detail */}
+            {reportData.outstandingInvoices && reportData.outstandingInvoices.length > 0 && (
+              <div className="border rounded-lg p-4">
+                <h4 className="font-semibold text-slate-700 mb-3">Outstanding Invoices</h4>
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="bg-slate-100 border-b">
+                      <th className="text-left py-2 px-3">Date</th>
+                      <th className="text-left py-2 px-3">Customer</th>
+                      <th className="text-right py-2 px-3">Amount</th>
+                      <th className="text-right py-2 px-3">Age (Days)</th>
+                      <th className="text-right py-2 px-3">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {reportData.outstandingInvoices.map((invoice, i) => {
+                      let ageCategory = 'Current'
+                      let ageColor = 'text-green-600'
+                      if (invoice.age > 120) {
+                        ageCategory = 'Over 120 days'
+                        ageColor = 'text-red-600'
+                      } else if (invoice.age > 90) {
+                        ageCategory = '91-120 days'
+                        ageColor = 'text-orange-600'
+                      } else if (invoice.age > 60) {
+                        ageCategory = '61-90 days'
+                        ageColor = 'text-orange-500'
+                      } else if (invoice.age > 30) {
+                        ageCategory = '31-60 days'
+                        ageColor = 'text-yellow-600'
+                      }
+                      
+                      return (
+                        <tr key={i} className="border-b">
+                          <td className="py-2 px-3">{formatDate(invoice.date)}</td>
+                          <td className="py-2 px-3">{invoice.customer}</td>
+                          <td className="py-2 px-3 text-right font-medium">{formatCurrency(invoice.amount)}</td>
+                          <td className="py-2 px-3 text-right">{invoice.age}</td>
+                          <td className={`py-2 px-3 text-right font-medium ${ageColor}`}>{ageCategory}</td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            {/* Aging Summary */}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              {/* Left - Aging Table */}
+              <div className="space-y-4">
+                <h4 className="font-semibold text-slate-700">Aging Summary</h4>
+                <table className="w-full">
+                  <thead>
+                    <tr className="bg-slate-100">
+                      <th className="text-left py-2 px-3">Aging Period</th>
+                      <th className="text-right py-2 px-3">Amount</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr className="border-b"><td className="py-2 px-3">Current (0-30 days)</td><td className="py-2 px-3 text-right">{formatCurrency(reportData.aging.current)}</td></tr>
+                    <tr className="border-b"><td className="py-2 px-3">31-60 days</td><td className="py-2 px-3 text-right">{formatCurrency(reportData.aging.days30)}</td></tr>
+                    <tr className="border-b"><td className="py-2 px-3">61-90 days</td><td className="py-2 px-3 text-right">{formatCurrency(reportData.aging.days60)}</td></tr>
+                    <tr className="border-b"><td className="py-2 px-3">91-120 days</td><td className="py-2 px-3 text-right">{formatCurrency(reportData.aging.days90)}</td></tr>
+                    <tr className="border-b"><td className="py-2 px-3">Over 120 days</td><td className="py-2 px-3 text-right text-red-600">{formatCurrency(reportData.aging.over120)}</td></tr>
+                  </tbody>
+                  <tfoot>
+                    <tr className="bg-slate-100 font-bold">
+                      <td className="py-2 px-3">Total Receivable</td>
+                      <td className="py-2 px-3 text-right">{formatCurrency(reportData.totalReceivable)}</td>
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+
+              {/* Right - Chart */}
+              <div className="bg-slate-50 rounded-lg p-4">
+                <h4 className="text-sm font-medium text-slate-600 mb-3">Aging Distribution</h4>
+                <ResponsiveContainer width="100%" height={250}>
+                  <BarChart data={arAgingBarData} layout="vertical">
+                    <CartesianGrid strokeDasharray="3 3" />
+                    <XAxis type="number" tick={{ fontSize: 12 }} tickFormatter={(v) => `$${(v/1000).toFixed(0)}k`} />
+                    <YAxis type="category" dataKey="name" tick={{ fontSize: 12 }} width={60} />
+                    <Tooltip formatter={(value) => formatCurrency(value)} />
+                    <Bar dataKey="value">
+                      {arAgingBarData.map((entry, index) => (
+                        <Cell key={`cell-${index}`} fill={entry.fill} />
+                      ))}
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
             </div>
           </div>
         )

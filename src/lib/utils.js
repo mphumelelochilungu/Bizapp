@@ -58,7 +58,17 @@ export function formatCurrency(amount, currency = null) {
 }
 
 export function formatDate(date) {
-  return new Date(date).toLocaleDateString('en-US', { 
+  if (!date) return ''
+  
+  // Handle date string without timezone conversion
+  // If date is in YYYY-MM-DD format, parse it as local date
+  const dateStr = typeof date === 'string' ? date : date.toISOString()
+  const [year, month, day] = dateStr.split('T')[0].split('-')
+  
+  // Create date in local timezone to avoid timezone shifts
+  const localDate = new Date(parseInt(year), parseInt(month) - 1, parseInt(day))
+  
+  return localDate.toLocaleDateString('en-US', { 
     year: 'numeric', 
     month: 'short', 
     day: 'numeric' 

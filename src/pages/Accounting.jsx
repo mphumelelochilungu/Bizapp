@@ -354,6 +354,85 @@ export function Accounting() {
     return { totalDebit, totalCredit, isBalanced: Math.abs(totalDebit - totalCredit) < 0.01 }
   }
 
+  const validateInventoryFlow = async (lines) => {
+    // Get inventory account IDs
+    const rawMaterialsAcc = accounts.find(a => a.code === '1210')
+    const wipAcc = accounts.find(a => a.code === '1220' || a.code === '1320')
+    const finishedGoodsAcc = accounts.find(a => a.code === '1230' || a.code === '1330')
+    const cogsAcc = accounts.find(a => a.code === '5000')
+
+    // Check for COGS without Finished Goods credit
+    const cogsLine = lines.find(l => l.account_id == cogsAcc?.id && parseFloat(l.debit_amount) > 0)
+    if (cogsLine) {
+      const fgLine = lines.find(l => l.account_id == finishedGoodsAcc?.id && parseFloat(l.credit_amount) > 0)
+      if (!fgLine) {
+        return { valid: false, message: '⚠️ Manufacturing Flow: COGS entry must credit Finished Goods inventory' }
+      }
+      
+      // Check if sufficient finished goods inventory exists
+      const fgBalance = await getAccountBalance(finishedGoodsAcc.id)
+      const cogsAmount = parseFloat(cogsLine.debit_amount)
+      if (fgBalance < cogsAmount) {
+        return { 
+          valid: false, 
+          message: `⚠️ Insufficient Inventory: Finished Goods balance (${formatCurrency(fgBalance)}) is less than COGS amount (${formatCurrency(cogsAmount)}). You cannot sell more than you have in stock.` 
+        }
+      }
+    }
+
+    // Check for Finished Goods debit without WIP credit
+    const fgDebitLine = lines.find(l => l.account_id == finishedGoodsAcc?.id && parseFloat(l.debit_amount) > 0)
+    if (fgDebitLine) {
+      const wipLine = lines.find(l => l.account_id == wipAcc?.id && parseFloat(l.credit_amount) > 0)
+      if (!wipLine) {
+        return { valid: false, message: '⚠️ Manufacturing Flow: Production entry must credit Work in Progress' }
+      }
+    }
+
+    // Check for WIP debit without Raw Materials credit
+    const wipDebitLine = lines.find(l => l.account_id == wipAcc?.id && parseFloat(l.debit_amount) > 0)
+    if (wipDebitLine) {
+      const rmLine = lines.find(l => l.account_id == rawMaterialsAcc?.id && parseFloat(l.credit_amount) > 0)
+      if (!rmLine) {
+        return { valid: false, message: '⚠️ Manufacturing Flow: WIP entry must credit Raw Materials. Raw Materials must be consumed before production.' }
+      }
+      
+      // Check if sufficient raw materials exist
+      const rmBalance = await getAccountBalance(rawMaterialsAcc.id)
+      const wipAmount = parseFloat(wipDebitLine.debit_amount)
+      if (rmBalance < wipAmount) {
+        return { 
+          valid: false, 
+          message: `⚠️ Insufficient Inventory: Raw Materials balance (${formatCurrency(rmBalance)}) is less than WIP amount (${formatCurrency(wipAmount)})` 
+        }
+      }
+    }
+
+    return { valid: true }
+  }
+
+  const getAccountBalance = async (accountId) => {
+    try {
+      const { data, error } = await supabase
+        .from('journal_entry_lines')
+        .select('debit_amount, credit_amount, journal_entries!inner(user_business_id, is_posted)')
+        .eq('account_id', accountId)
+        .eq('journal_entries.user_business_id', selectedBusinessId)
+        .eq('journal_entries.is_posted', true)
+
+      if (error) throw error
+
+      const balance = data.reduce((sum, line) => {
+        return sum + (parseFloat(line.debit_amount) || 0) - (parseFloat(line.credit_amount) || 0)
+      }, 0)
+
+      return balance
+    } catch (error) {
+      console.error('Error getting account balance:', error)
+      return 0
+    }
+  }
+
   const handleSaveJournalEntry = async (post = false) => {
     const { totalDebit, totalCredit, isBalanced } = calculateEntryTotals()
 
@@ -375,6 +454,15 @@ export function Accounting() {
     if (post && !isBalanced) {
       alert('Cannot post: Debits must equal Credits')
       return
+    }
+
+    // Validate inventory flow for posted entries
+    if (post) {
+      const inventoryValidation = await validateInventoryFlow(newEntry.lines)
+      if (!inventoryValidation.valid) {
+        alert(inventoryValidation.message)
+        return
+      }
     }
 
     try {
