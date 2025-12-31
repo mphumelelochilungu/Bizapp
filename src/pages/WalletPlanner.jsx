@@ -3,7 +3,7 @@ import { Plus, AlertCircle, TrendingUp, Wallet, Trash2, Edit2, Target, PiggyBank
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/Card'
 import { Button } from '../components/ui/Button'
 import { Input, Select } from '../components/ui/Input'
-import { formatCurrency, formatDate, EXPENSE_CATEGORIES } from '../lib/utils'
+import { formatCurrency, formatDate } from '../lib/utils'
 import { supabase } from '../lib/supabase'
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, BarChart, Bar, XAxis, YAxis, CartesianGrid, Legend, LineChart, Line } from 'recharts'
 
@@ -15,20 +15,24 @@ export function WalletPlanner() {
   const [expenses, setExpenses] = useState([])
   const [budgets, setBudgets] = useState([])
   const [savingsGoals, setSavingsGoals] = useState([])
+  const [expenseCategories, setExpenseCategories] = useState([])
   
   // Modal states
   const [showAddIncome, setShowAddIncome] = useState(false)
   const [showAddExpense, setShowAddExpense] = useState(false)
   const [showAddBudget, setShowAddBudget] = useState(false)
   const [showAddSavingsGoal, setShowAddSavingsGoal] = useState(false)
+  const [showManageCategories, setShowManageCategories] = useState(false)
   const [editingIncome, setEditingIncome] = useState(null)
   const [editingExpense, setEditingExpense] = useState(null)
+  const [editingCategory, setEditingCategory] = useState(null)
   
   // Form states
   const [newIncome, setNewIncome] = useState({ source: '', amount: '', frequency: 'Monthly' })
   const [newExpense, setNewExpense] = useState({ category: '', amount: '', date: new Date().toISOString().split('T')[0], description: '' })
   const [newBudget, setNewBudget] = useState({ category: '', limit_amount: '' })
   const [newSavingsGoal, setNewSavingsGoal] = useState({ name: '', target_amount: '', current_amount: '0', deadline: '' })
+  const [newCategory, setNewCategory] = useState('')
   
   // Date filter
   const [selectedMonth, setSelectedMonth] = useState(new Date().getMonth() + 1)
@@ -78,11 +82,19 @@ export function WalletPlanner() {
         .select('*')
         .eq('user_id', user.id)
         .order('created_at', { ascending: false })
+      
+      // Fetch expense categories
+      const { data: categoriesData } = await supabase
+        .from('expense_categories')
+        .select('*')
+        .eq('user_id', user.id)
+        .order('name', { ascending: true })
 
       setIncome(incomeData || [])
       setExpenses(expenseData || [])
       setBudgets(budgetData || [])
       setSavingsGoals(savingsData || [])
+      setExpenseCategories(categoriesData || [])
     } catch (error) {
       console.error('Error fetching data:', error)
     } finally {
@@ -129,20 +141,35 @@ export function WalletPlanner() {
     if (!newIncome.source || !newIncome.amount) return
     try {
       const { data: { user } } = await supabase.auth.getUser()
-      const { error } = await supabase
-        .from('personal_income')
-        .insert([{ ...newIncome, user_id: user.id }])
       
-      if (error) throw error
+      if (editingIncome) {
+        // Update existing income
+        const { error } = await supabase
+          .from('personal_income')
+          .update(newIncome)
+          .eq('id', editingIncome.id)
+        if (error) throw error
+      } else {
+        // Insert new income
+        const { error } = await supabase
+          .from('personal_income')
+          .insert([{ ...newIncome, user_id: user.id }])
+        if (error) throw error
+      }
+      
       setNewIncome({ source: '', amount: '', frequency: 'Monthly' })
+      setEditingIncome(null)
       setShowAddIncome(false)
       fetchAllData()
     } catch (error) {
-      console.error('Error adding income:', error)
+      console.error('Error saving income:', error)
     }
   }
 
   const deleteIncome = async (id) => {
+    if (!window.confirm('Are you sure you want to delete this income source?')) {
+      return
+    }
     try {
       await supabase.from('personal_income').delete().eq('id', id)
       fetchAllData()
@@ -155,20 +182,35 @@ export function WalletPlanner() {
     if (!newExpense.category || !newExpense.amount) return
     try {
       const { data: { user } } = await supabase.auth.getUser()
-      const { error } = await supabase
-        .from('personal_expenses')
-        .insert([{ ...newExpense, user_id: user.id }])
       
-      if (error) throw error
+      if (editingExpense) {
+        // Update existing expense
+        const { error } = await supabase
+          .from('personal_expenses')
+          .update(newExpense)
+          .eq('id', editingExpense.id)
+        if (error) throw error
+      } else {
+        // Insert new expense
+        const { error } = await supabase
+          .from('personal_expenses')
+          .insert([{ ...newExpense, user_id: user.id }])
+        if (error) throw error
+      }
+      
       setNewExpense({ category: '', amount: '', date: new Date().toISOString().split('T')[0], description: '' })
+      setEditingExpense(null)
       setShowAddExpense(false)
       fetchAllData()
     } catch (error) {
-      console.error('Error adding expense:', error)
+      console.error('Error saving expense:', error)
     }
   }
 
   const deleteExpense = async (id) => {
+    if (!window.confirm('Are you sure you want to delete this expense?')) {
+      return
+    }
     try {
       await supabase.from('personal_expenses').delete().eq('id', id)
       fetchAllData()
@@ -200,6 +242,9 @@ export function WalletPlanner() {
   }
 
   const deleteBudget = async (id) => {
+    if (!window.confirm('Are you sure you want to delete this budget?')) {
+      return
+    }
     try {
       await supabase.from('personal_budgets').delete().eq('id', id)
       fetchAllData()
@@ -238,11 +283,60 @@ export function WalletPlanner() {
   }
 
   const deleteSavingsGoal = async (id) => {
+    if (!window.confirm('Are you sure you want to delete this savings goal?')) {
+      return
+    }
     try {
       await supabase.from('savings_goals').delete().eq('id', id)
       fetchAllData()
     } catch (error) {
       console.error('Error deleting savings goal:', error)
+    }
+  }
+
+  // Category CRUD operations
+  const addCategory = async () => {
+    if (!newCategory.trim()) return
+    try {
+      const { data: { user } } = await supabase.auth.getUser()
+      
+      if (editingCategory) {
+        // Update existing category
+        const { error } = await supabase
+          .from('expense_categories')
+          .update({ name: newCategory })
+          .eq('id', editingCategory.id)
+        if (error) throw error
+      } else {
+        // Insert new category
+        const { error } = await supabase
+          .from('expense_categories')
+          .insert([{ name: newCategory, user_id: user.id, is_default: false }])
+        if (error) throw error
+      }
+      
+      setNewCategory('')
+      setEditingCategory(null)
+      fetchAllData()
+    } catch (error) {
+      console.error('Error saving category:', error)
+      alert('Error: ' + error.message)
+    }
+  }
+
+  const deleteCategory = async (id, isDefault) => {
+    if (isDefault) {
+      alert('Cannot delete default categories')
+      return
+    }
+    if (!window.confirm('Are you sure you want to delete this category?')) {
+      return
+    }
+    try {
+      await supabase.from('expense_categories').delete().eq('id', id)
+      fetchAllData()
+    } catch (error) {
+      console.error('Error deleting category:', error)
     }
   }
 
@@ -386,7 +480,7 @@ export function WalletPlanner() {
             ) : (
               <div className="space-y-3">
                 {income.map(item => (
-                  <div key={item.id} className="flex items-center justify-between p-3 bg-green-50 rounded-lg group">
+                  <div key={item.id} className="flex items-center justify-between p-3 bg-green-50 rounded-lg">
                     <div>
                       <div className="font-medium text-slate-900">{item.source}</div>
                       <div className="text-sm text-slate-600">{item.frequency}</div>
@@ -396,8 +490,20 @@ export function WalletPlanner() {
                         {formatCurrency(item.amount)}
                       </div>
                       <button
+                        onClick={() => {
+                          setEditingIncome(item)
+                          setNewIncome({ source: item.source, amount: item.amount, frequency: item.frequency })
+                          setShowAddIncome(true)
+                        }}
+                        className="p-1 text-slate-400 hover:text-blue-600 transition-colors"
+                        title="Edit"
+                      >
+                        <Edit2 className="h-4 w-4" />
+                      </button>
+                      <button
                         onClick={() => deleteIncome(item.id)}
-                        className="p-1 text-slate-400 hover:text-red-600 opacity-0 group-hover:opacity-100 transition-opacity"
+                        className="p-1 text-slate-400 hover:text-red-600 transition-colors"
+                        title="Delete"
                       >
                         <Trash2 className="h-4 w-4" />
                       </button>
@@ -483,7 +589,7 @@ export function WalletPlanner() {
                 const isOverLimit = budget.percentage >= 100
 
                 return (
-                  <div key={budget.id} className="group">
+                  <div key={budget.id}>
                     <div className="flex items-center justify-between mb-2">
                       <div className="flex items-center space-x-2">
                         <span className="font-medium text-slate-900">{budget.category}</span>
@@ -501,7 +607,8 @@ export function WalletPlanner() {
                         </div>
                         <button
                           onClick={() => deleteBudget(budget.id)}
-                          className="p-1 text-slate-400 hover:text-red-600 opacity-0 group-hover:opacity-100 transition-opacity"
+                          className="p-1 text-slate-400 hover:text-red-600 transition-colors"
+                          title="Delete"
                         >
                           <Trash2 className="h-4 w-4" />
                         </button>
@@ -555,15 +662,28 @@ export function WalletPlanner() {
                 const isComplete = percentage >= 100
 
                 return (
-                  <div key={goal.id} className="p-4 bg-purple-50 rounded-lg group">
+                  <div key={goal.id} className="p-4 bg-purple-50 rounded-lg">
                     <div className="flex items-center justify-between mb-2">
                       <h4 className="font-semibold text-slate-900">{goal.name}</h4>
-                      <button
-                        onClick={() => deleteSavingsGoal(goal.id)}
-                        className="p-1 text-slate-400 hover:text-red-600 opacity-0 group-hover:opacity-100 transition-opacity"
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </button>
+                      <div className="flex items-center space-x-1">
+                        <button
+                          onClick={() => {
+                            const amount = prompt('Enter new saved amount:', goal.current_amount)
+                            if (amount) updateSavingsGoal(goal.id, amount)
+                          }}
+                          className="p-1 text-slate-400 hover:text-blue-600 transition-colors"
+                          title="Edit amount"
+                        >
+                          <Edit2 className="h-4 w-4" />
+                        </button>
+                        <button
+                          onClick={() => deleteSavingsGoal(goal.id)}
+                          className="p-1 text-slate-400 hover:text-red-600 transition-colors"
+                          title="Delete"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </button>
+                      </div>
                     </div>
                     <div className="flex justify-between text-sm mb-2">
                       <span className="text-purple-600 font-medium">{formatCurrency(goal.current_amount)}</span>
@@ -580,15 +700,6 @@ export function WalletPlanner() {
                         {percentage.toFixed(0)}% complete
                         {goal.deadline && ` • Due ${formatDate(goal.deadline)}`}
                       </span>
-                      <button
-                        onClick={() => {
-                          const amount = prompt('Enter new saved amount:', goal.current_amount)
-                          if (amount) updateSavingsGoal(goal.id, amount)
-                        }}
-                        className="text-xs text-purple-600 hover:text-purple-800 font-medium"
-                      >
-                        Update
-                      </button>
                     </div>
                   </div>
                 )
@@ -619,7 +730,7 @@ export function WalletPlanner() {
           ) : (
             <div className="space-y-2">
               {expenses.slice(0, 10).map(expense => (
-                <div key={expense.id} className="flex items-center justify-between p-3 hover:bg-slate-50 rounded-lg group">
+                <div key={expense.id} className="flex items-center justify-between p-3 hover:bg-slate-50 rounded-lg">
                   <div className="flex-1">
                     <div className="flex items-center space-x-2">
                       <span className="font-medium text-slate-900">{expense.category}</span>
@@ -636,8 +747,25 @@ export function WalletPlanner() {
                       -{formatCurrency(expense.amount)}
                     </div>
                     <button
+                      onClick={() => {
+                        setEditingExpense(expense)
+                        setNewExpense({ 
+                          category: expense.category, 
+                          amount: expense.amount, 
+                          date: expense.date,
+                          description: expense.description || ''
+                        })
+                        setShowAddExpense(true)
+                      }}
+                      className="p-1 text-slate-400 hover:text-blue-600 transition-colors"
+                      title="Edit"
+                    >
+                      <Edit2 className="h-4 w-4" />
+                    </button>
+                    <button
                       onClick={() => deleteExpense(expense.id)}
-                      className="p-1 text-slate-400 hover:text-red-600 opacity-0 group-hover:opacity-100 transition-opacity"
+                      className="p-1 text-slate-400 hover:text-red-600 transition-colors"
+                      title="Delete"
                     >
                       <Trash2 className="h-4 w-4" />
                     </button>
@@ -660,8 +788,12 @@ export function WalletPlanner() {
           <Card className="w-full max-w-md">
             <CardHeader>
               <div className="flex items-center justify-between">
-                <CardTitle>Add Income Source</CardTitle>
-                <button onClick={() => setShowAddIncome(false)} className="text-slate-400 hover:text-slate-600">
+                <CardTitle>{editingIncome ? 'Edit Income Source' : 'Add Income Source'}</CardTitle>
+                <button onClick={() => {
+                  setShowAddIncome(false)
+                  setEditingIncome(null)
+                  setNewIncome({ source: '', amount: '', frequency: 'Monthly' })
+                }} className="text-slate-400 hover:text-slate-600">
                   <X className="h-5 w-5" />
                 </button>
               </div>
@@ -702,8 +834,12 @@ export function WalletPlanner() {
                   </select>
                 </div>
                 <div className="flex space-x-3 pt-4">
-                  <Button onClick={addIncome} className="flex-1">Add Income</Button>
-                  <Button onClick={() => setShowAddIncome(false)} variant="secondary" className="flex-1">
+                  <Button onClick={addIncome} className="flex-1">{editingIncome ? 'Update' : 'Add Income'}</Button>
+                  <Button onClick={() => {
+                    setShowAddIncome(false)
+                    setEditingIncome(null)
+                    setNewIncome({ source: '', amount: '', frequency: 'Monthly' })
+                  }} variant="secondary" className="flex-1">
                     Cancel
                   </Button>
                 </div>
@@ -719,8 +855,12 @@ export function WalletPlanner() {
           <Card className="w-full max-w-md">
             <CardHeader>
               <div className="flex items-center justify-between">
-                <CardTitle>Add Expense</CardTitle>
-                <button onClick={() => setShowAddExpense(false)} className="text-slate-400 hover:text-slate-600">
+                <CardTitle>{editingExpense ? 'Edit Expense' : 'Add Expense'}</CardTitle>
+                <button onClick={() => {
+                  setShowAddExpense(false)
+                  setEditingExpense(null)
+                  setNewExpense({ category: '', amount: '', date: new Date().toISOString().split('T')[0], description: '' })
+                }} className="text-slate-400 hover:text-slate-600">
                   <X className="h-5 w-5" />
                 </button>
               </div>
@@ -728,15 +868,24 @@ export function WalletPlanner() {
             <CardContent>
               <div className="space-y-4">
                 <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">Category</label>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="block text-sm font-medium text-slate-700">Category</label>
+                    <button
+                      type="button"
+                      onClick={() => setShowManageCategories(true)}
+                      className="text-xs text-blue-600 hover:text-blue-800"
+                    >
+                      Manage Categories
+                    </button>
+                  </div>
                   <select
                     value={newExpense.category}
                     onChange={(e) => setNewExpense({ ...newExpense, category: e.target.value })}
                     className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
                   >
                     <option value="">Select category</option>
-                    {EXPENSE_CATEGORIES.map(cat => (
-                      <option key={cat} value={cat}>{cat}</option>
+                    {expenseCategories.map(cat => (
+                      <option key={cat.id} value={cat.name}>{cat.name}</option>
                     ))}
                   </select>
                 </div>
@@ -770,8 +919,12 @@ export function WalletPlanner() {
                   />
                 </div>
                 <div className="flex space-x-3 pt-4">
-                  <Button onClick={addExpense} className="flex-1">Add Expense</Button>
-                  <Button onClick={() => setShowAddExpense(false)} variant="secondary" className="flex-1">
+                  <Button onClick={addExpense} className="flex-1">{editingExpense ? 'Update' : 'Add Expense'}</Button>
+                  <Button onClick={() => {
+                    setShowAddExpense(false)
+                    setEditingExpense(null)
+                    setNewExpense({ category: '', amount: '', date: new Date().toISOString().split('T')[0], description: '' })
+                  }} variant="secondary" className="flex-1">
                     Cancel
                   </Button>
                 </div>
@@ -803,8 +956,8 @@ export function WalletPlanner() {
                     className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
                   >
                     <option value="">Select category</option>
-                    {EXPENSE_CATEGORIES.filter(cat => !budgets.find(b => b.category === cat)).map(cat => (
-                      <option key={cat} value={cat}>{cat}</option>
+                    {expenseCategories.filter(cat => !budgets.find(b => b.category === cat.name)).map(cat => (
+                      <option key={cat.id} value={cat.name}>{cat.name}</option>
                     ))}
                   </select>
                 </div>
@@ -887,6 +1040,114 @@ export function WalletPlanner() {
                   <Button onClick={addSavingsGoal} className="flex-1">Add Goal</Button>
                   <Button onClick={() => setShowAddSavingsGoal(false)} variant="secondary" className="flex-1">
                     Cancel
+                  </Button>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      )}
+
+      {/* Manage Categories Modal */}
+      {showManageCategories && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <Card className="w-full max-w-md">
+            <CardHeader>
+              <div className="flex items-center justify-between">
+                <CardTitle>Manage Expense Categories</CardTitle>
+                <button onClick={() => {
+                  setShowManageCategories(false)
+                  setEditingCategory(null)
+                  setNewCategory('')
+                }} className="text-slate-400 hover:text-slate-600">
+                  <X className="h-5 w-5" />
+                </button>
+              </div>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-4">
+                {/* Add/Edit Category Form */}
+                <div className="flex space-x-2">
+                  <input
+                    type="text"
+                    value={newCategory}
+                    onChange={(e) => setNewCategory(e.target.value)}
+                    placeholder="Enter category name"
+                    className="flex-1 px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    onKeyPress={(e) => e.key === 'Enter' && addCategory()}
+                  />
+                  <Button onClick={addCategory} size="sm">
+                    {editingCategory ? 'Update' : 'Add'}
+                  </Button>
+                  {editingCategory && (
+                    <Button 
+                      onClick={() => {
+                        setEditingCategory(null)
+                        setNewCategory('')
+                      }} 
+                      variant="secondary" 
+                      size="sm"
+                    >
+                      Cancel
+                    </Button>
+                  )}
+                </div>
+
+                {/* Categories List */}
+                <div className="border-t pt-4">
+                  <h4 className="text-sm font-medium text-slate-700 mb-3">Your Categories</h4>
+                  <div className="space-y-2 max-h-96 overflow-y-auto">
+                    {expenseCategories.length === 0 ? (
+                      <p className="text-sm text-slate-500 text-center py-4">No categories yet</p>
+                    ) : (
+                      expenseCategories.map(category => (
+                        <div key={category.id} className="flex items-center justify-between p-2 bg-slate-50 rounded-lg">
+                          <div className="flex items-center space-x-2">
+                            <span className="text-sm text-slate-900">{category.name}</span>
+                            {category.is_default && (
+                              <span className="px-2 py-0.5 bg-blue-100 text-blue-700 text-xs rounded">Default</span>
+                            )}
+                          </div>
+                          <div className="flex items-center space-x-1">
+                            {!category.is_default && (
+                              <>
+                                <button
+                                  onClick={() => {
+                                    setEditingCategory(category)
+                                    setNewCategory(category.name)
+                                  }}
+                                  className="p-1 text-slate-400 hover:text-blue-600 transition-colors"
+                                  title="Edit"
+                                >
+                                  <Edit2 className="h-4 w-4" />
+                                </button>
+                                <button
+                                  onClick={() => deleteCategory(category.id, category.is_default)}
+                                  className="p-1 text-slate-400 hover:text-red-600 transition-colors"
+                                  title="Delete"
+                                >
+                                  <Trash2 className="h-4 w-4" />
+                                </button>
+                              </>
+                            )}
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+
+                <div className="pt-4 border-t">
+                  <Button 
+                    onClick={() => {
+                      setShowManageCategories(false)
+                      setEditingCategory(null)
+                      setNewCategory('')
+                    }} 
+                    variant="secondary" 
+                    className="w-full"
+                  >
+                    Close
                   </Button>
                 </div>
               </div>
