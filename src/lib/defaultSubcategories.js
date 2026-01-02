@@ -6,9 +6,10 @@ export const DEFAULT_SUBCATEGORIES = [
   // ASSETS (1000-1999)
   // ==========================================
   { account_type: 'Asset', name: 'Current Assets', display_order: 1, is_system: true },
-  { account_type: 'Asset', name: 'Cash', display_order: 2, is_system: true },
-  { account_type: 'Asset', name: 'Bank', display_order: 3, is_system: true },
-  { account_type: 'Asset', name: 'Accounts Receivable', display_order: 4, is_system: true },
+  { account_type: 'Asset', name: 'Bank Account', display_order: 2, is_system: true },
+  { account_type: 'Asset', name: 'Digital Wallet', display_order: 3, is_system: true },
+  { account_type: 'Asset', name: 'Cash', display_order: 4, is_system: true },
+  { account_type: 'Asset', name: 'Accounts Receivable', display_order: 5, is_system: true },
   { account_type: 'Asset', name: 'Inventory', display_order: 5, is_system: true },
   { account_type: 'Asset', name: 'Prepaid Expenses', display_order: 6, is_system: true },
   { account_type: 'Asset', name: 'Non-Current Assets', display_order: 7, is_system: true },

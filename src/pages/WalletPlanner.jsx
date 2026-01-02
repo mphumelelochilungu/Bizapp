@@ -49,11 +49,13 @@ export function WalletPlanner() {
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) return
 
-      // Fetch income
+      // Fetch income for selected month
       const { data: incomeData } = await supabase
         .from('personal_income')
         .select('*')
         .eq('user_id', user.id)
+        .eq('month', selectedMonth)
+        .eq('year', selectedYear)
         .order('created_at', { ascending: false })
       
       // Fetch expenses for selected month
@@ -76,11 +78,13 @@ export function WalletPlanner() {
         .eq('month', selectedMonth)
         .eq('year', selectedYear)
       
-      // Fetch savings goals
+      // Fetch savings goals for selected month
       const { data: savingsData } = await supabase
         .from('savings_goals')
         .select('*')
         .eq('user_id', user.id)
+        .eq('month', selectedMonth)
+        .eq('year', selectedYear)
         .order('created_at', { ascending: false })
       
       // Fetch expense categories
@@ -153,7 +157,7 @@ export function WalletPlanner() {
         // Insert new income
         const { error } = await supabase
           .from('personal_income')
-          .insert([{ ...newIncome, user_id: user.id }])
+          .insert([{ ...newIncome, user_id: user.id, month: selectedMonth, year: selectedYear }])
         if (error) throw error
       }
       
@@ -259,7 +263,7 @@ export function WalletPlanner() {
       const { data: { user } } = await supabase.auth.getUser()
       const { error } = await supabase
         .from('savings_goals')
-        .insert([{ ...newSavingsGoal, user_id: user.id }])
+        .insert([{ ...newSavingsGoal, user_id: user.id, month: selectedMonth, year: selectedYear }])
       
       if (error) throw error
       setNewSavingsGoal({ name: '', target_amount: '', current_amount: '0', deadline: '' })

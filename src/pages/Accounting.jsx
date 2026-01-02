@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react'
 import { 
   BookOpen, Plus, FileText, Scale, List, ChevronDown, ChevronRight,
   Edit2, Trash2, X, Check, RefreshCw, Download, Building2, Calendar,
-  ArrowUpRight, ArrowDownRight, Info, Search
+  ArrowUpRight, ArrowDownRight, Info, Search, Wallet, Banknote
 } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/Card'
 import { Button } from '../components/ui/Button'
@@ -15,6 +15,18 @@ import { ACCOUNT_GUIDE, searchAccountGuide, getAccountInfo } from '../lib/accoun
 
 const ACCOUNT_TYPES = ['Asset', 'Liability', 'Equity', 'Revenue', 'COGS', 'Expense', 'Other Income', 'Other Expense']
 
+// Account type code prefixes
+const ACCOUNT_TYPE_PREFIXES = {
+  'Asset': '1',
+  'Liability': '2',
+  'Equity': '3',
+  'Revenue': '4',
+  'COGS': '5',
+  'Expense': '6',
+  'Other Income': '7',
+  'Other Expense': '7'
+}
+
 export function Accounting() {
   const [activeTab, setActiveTab] = useState('trial-balance')
   const [userBusinesses, setUserBusinesses] = useState([])
@@ -24,7 +36,7 @@ export function Accounting() {
   // Chart of Accounts
   const [accounts, setAccounts] = useState([])
   const [showAddAccount, setShowAddAccount] = useState(false)
-  const [newAccount, setNewAccount] = useState({ code: '', name: '', account_type: 'Asset', subcategory: '' })
+  const [newAccount, setNewAccount] = useState({ code: '', name: '', account_type: 'Asset', subcategory: '', codeDigits: '' })
   
   // Subcategories
   const [subcategories, setSubcategories] = useState([])
@@ -55,6 +67,17 @@ export function Accounting() {
   const [showAccountGuide, setShowAccountGuide] = useState(false)
   const [guideSearchTerm, setGuideSearchTerm] = useState('')
   const [selectedGuideSection, setSelectedGuideSection] = useState('assets')
+  
+  // Bank Account Modal
+  const [showBankAccountModal, setShowBankAccountModal] = useState(false)
+  const [newBankAccount, setNewBankAccount] = useState({
+    account_name: '',
+    account_type: 'Bank Account',
+    institution_name: '',
+    account_number: '',
+    currency_code: 'USD',
+    notes: ''
+  })
 
   // Fetch businesses on mount
   useEffect(() => {
@@ -118,10 +141,14 @@ export function Accounting() {
 
   const fetchAccounts = async () => {
     try {
+      // Fetch all accounts from Chart of Accounts
+      // Bank accounts are automatically created in the accounts table via database trigger
+      // Only fetch active accounts
       const { data, error } = await supabase
         .from('accounts')
         .select('*')
         .eq('user_business_id', selectedBusinessId)
+        .eq('is_active', true)
         .order('code')
 
       if (error) throw error
@@ -282,17 +309,26 @@ export function Accounting() {
       return
     }
 
+    // Validate code is 4 digits
+    if (newAccount.code.length !== 4) {
+      alert('Account code must be 4 digits (1 prefix + 3 digits)')
+      return
+    }
+
     try {
       const { error } = await supabase
         .from('accounts')
         .insert({
-          ...newAccount,
+          code: newAccount.code,
+          name: newAccount.name,
+          account_type: newAccount.account_type,
+          subcategory: newAccount.subcategory || null,
           user_business_id: selectedBusinessId
         })
 
       if (error) throw error
 
-      setNewAccount({ code: '', name: '', account_type: 'Asset', subcategory: '' })
+      setNewAccount({ code: '', name: '', account_type: 'Asset', subcategory: '', codeDigits: '' })
       setShowAddAccount(false)
       fetchAccounts()
     } catch (error) {
@@ -302,20 +338,98 @@ export function Accounting() {
   }
 
   const handleDeleteAccount = async (accountId) => {
-    if (!confirm('Are you sure you want to delete this account?')) return
+    const account = accounts.find(a => a.id === accountId)
+    const isBankAccount = ['Bank Account', 'Digital Wallet', 'Cash'].includes(account?.subcategory)
+    
+    if (!confirm(`Are you sure you want to delete "${account?.name}"?${isBankAccount ? ' This will also delete the associated bank account.' : ''}`)) return
 
     try {
-      const { error } = await supabase
-        .from('accounts')
-        .delete()
-        .eq('id', accountId)
+      if (isBankAccount) {
+        // Delete from bank_accounts table first (trigger will handle accounts table)
+        const { error: bankError } = await supabase
+          .from('bank_accounts')
+          .delete()
+          .eq('chart_account_id', accountId)
 
-      if (error) throw error
+        if (bankError) throw bankError
+      } else {
+        // Delete regular account
+        const { error } = await supabase
+          .from('accounts')
+          .delete()
+          .eq('id', accountId)
+
+        if (error) throw error
+      }
+      
       fetchAccounts()
     } catch (error) {
       console.error('Error deleting account:', error)
       alert('Error deleting account: ' + error.message)
     }
+  }
+
+  const handleSaveBankAccount = async () => {
+    if (!newBankAccount.account_name || !newBankAccount.account_type) {
+      alert('Please fill in required fields')
+      return
+    }
+
+    if (newBankAccount.account_type !== 'Cash' && !newBankAccount.institution_name) {
+      alert('Institution name is required for Bank Accounts and Digital Wallets')
+      return
+    }
+
+    try {
+      const { data: { user } } = await supabase.auth.getUser()
+      
+      const accountData = {
+        account_name: newBankAccount.account_name,
+        account_type: newBankAccount.account_type,
+        institution_name: newBankAccount.account_type !== 'Cash' ? newBankAccount.institution_name : null,
+        account_number: newBankAccount.account_number || null,
+        currency_code: newBankAccount.currency_code,
+        notes: newBankAccount.notes || null,
+        user_id: user.id,
+        user_business_id: selectedBusinessId
+      }
+
+      const { error } = await supabase
+        .from('bank_accounts')
+        .insert([accountData])
+      
+      if (error) throw error
+
+      // Reset form and close modal
+      setNewBankAccount({
+        account_name: '',
+        account_type: 'Bank Account',
+        institution_name: '',
+        account_number: '',
+        currency_code: 'USD',
+        notes: ''
+      })
+      setShowBankAccountModal(false)
+      
+      // Refresh accounts list
+      fetchAccounts()
+      alert('Bank account created successfully!')
+    } catch (error) {
+      console.error('Error saving bank account:', error)
+      alert('Error: ' + error.message)
+    }
+  }
+
+  const resetBankAccountForm = () => {
+    setNewBankAccount({
+      account_name: '',
+      account_type: 'Bank Account',
+      institution_name: '',
+      account_number: '',
+      currency_code: 'USD',
+      notes: ''
+    })
+    setShowBankAccountModal(false)
   }
 
   const addEntryLine = () => {
@@ -466,13 +580,28 @@ export function Accounting() {
     }
 
     try {
+      // Generate reference number if not provided
+      let referenceNumber = newEntry.reference_number
+      if (!referenceNumber) {
+        // Get the count of existing journal entries for this business
+        const { count } = await supabase
+          .from('journal_entries')
+          .select('*', { count: 'exact', head: true })
+          .eq('user_business_id', selectedBusinessId)
+        
+        // Generate reference number: JE-YYYY-NNNN
+        const year = new Date().getFullYear()
+        const nextNumber = (count || 0) + 1
+        referenceNumber = `JE-${year}-${String(nextNumber).padStart(4, '0')}`
+      }
+
       // Create journal entry
       const { data: entry, error: entryError } = await supabase
         .from('journal_entries')
         .insert({
           user_business_id: selectedBusinessId,
           entry_date: newEntry.entry_date,
-          reference_number: newEntry.reference_number,
+          reference_number: referenceNumber,
           description: newEntry.description,
           is_posted: post
         })
@@ -486,7 +615,7 @@ export function Accounting() {
         .filter(line => line.account_id && (line.debit_amount || line.credit_amount))
         .map(line => ({
           journal_entry_id: entry.id,
-          account_id: parseInt(line.account_id),
+          account_id: line.account_id, // Don't parse - let database handle the type
           debit_amount: parseFloat(line.debit_amount) || 0,
           credit_amount: parseFloat(line.credit_amount) || 0,
           memo: line.memo
@@ -823,14 +952,15 @@ export function Accounting() {
                       />
                     </div>
                     <div>
-                      <label className="block text-sm font-medium text-slate-700 mb-1">Reference #</label>
+                      <label className="block text-sm font-medium text-slate-700 mb-1">Reference # (Optional)</label>
                       <input
                         type="text"
                         value={newEntry.reference_number}
                         onChange={(e) => setNewEntry({ ...newEntry, reference_number: e.target.value })}
-                        placeholder="INV-001"
-                        className="w-full px-3 py-2 border border-slate-300 rounded-lg"
+                        placeholder="Auto-generated if left blank"
+                        className="w-full px-3 py-2 border border-slate-300 rounded-lg bg-slate-50"
                       />
+                      <p className="text-xs text-slate-500 mt-1">Leave blank to auto-generate (e.g., JE-2026-0001)</p>
                     </div>
                     <div>
                       <label className="block text-sm font-medium text-slate-700 mb-1">Description *</label>
@@ -1250,17 +1380,62 @@ export function Accounting() {
               <div className="mb-6 p-4 border border-slate-200 rounded-lg bg-slate-50">
                 <h4 className="text-sm font-semibold text-slate-700 mb-3">Add New Account</h4>
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
+                  {/* 1. Type */}
                   <div>
-                    <label className="block text-sm font-medium text-slate-700 mb-1">Code *</label>
-                    <input
-                      type="text"
-                      value={newAccount.code}
-                      onChange={(e) => setNewAccount({ ...newAccount, code: e.target.value })}
-                      placeholder="e.g., 1000"
-                      className="w-full px-3 py-2 border border-slate-300 rounded-lg"
-                    />
-                    <p className="text-xs text-slate-500 mt-1">1000-7999</p>
+                    <label className="block text-sm font-medium text-slate-700 mb-1">Type *</label>
+                    <select
+                      value={newAccount.account_type}
+                      onChange={(e) => {
+                        const newType = e.target.value
+                        setNewAccount({ 
+                          ...newAccount, 
+                          account_type: newType,
+                          subcategory: '', // Reset subcategory when type changes
+                          code: ACCOUNT_TYPE_PREFIXES[newType] + newAccount.codeDigits
+                        })
+                      }}
+                      className="w-full px-3 py-2 border border-slate-300 rounded-lg bg-white"
+                    >
+                      {ACCOUNT_TYPES.map(type => (
+                        <option key={type} value={type}>{type}</option>
+                      ))}
+                    </select>
+                    <p className="text-xs text-slate-500 mt-1">Prefix: {ACCOUNT_TYPE_PREFIXES[newAccount.account_type]}XXX</p>
                   </div>
+                  
+                  {/* 2. Subcategory */}
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-1">Subcategory</label>
+                    <select
+                      value={newAccount.subcategory}
+                      onChange={(e) => {
+                        const selectedSubcategory = e.target.value
+                        // Check if it's a bank-related subcategory
+                        if (['Bank Account', 'Digital Wallet', 'Cash'].includes(selectedSubcategory)) {
+                          // Open bank account modal instead
+                          setNewBankAccount({
+                            ...newBankAccount,
+                            account_type: selectedSubcategory
+                          })
+                          setShowBankAccountModal(true)
+                          setShowAddAccount(false)
+                        } else {
+                          setNewAccount({ ...newAccount, subcategory: selectedSubcategory })
+                        }
+                      }}
+                      className="w-full px-3 py-2 border border-slate-300 rounded-lg bg-white"
+                    >
+                      <option value="">None</option>
+                      {getSubcategoriesForType(newAccount.account_type).map(sub => (
+                        <option key={sub.id} value={sub.name}>{sub.name}</option>
+                      ))}
+                    </select>
+                    <p className="text-xs text-slate-500 mt-1">
+                      {newAccount.account_type === 'Asset' ? 'Bank accounts open special form' : 'Optional grouping'}
+                    </p>
+                  </div>
+                  
+                  {/* 3. Name */}
                   <div>
                     <label className="block text-sm font-medium text-slate-700 mb-1">Name *</label>
                     <input
@@ -1271,32 +1446,32 @@ export function Accounting() {
                       className="w-full px-3 py-2 border border-slate-300 rounded-lg"
                     />
                   </div>
+                  
+                  {/* 4. Code (last 3 digits) */}
                   <div>
-                    <label className="block text-sm font-medium text-slate-700 mb-1">Type *</label>
-                    <select
-                      value={newAccount.account_type}
-                      onChange={(e) => setNewAccount({ ...newAccount, account_type: e.target.value })}
-                      className="w-full px-3 py-2 border border-slate-300 rounded-lg bg-white"
-                    >
-                      {ACCOUNT_TYPES.map(type => (
-                        <option key={type} value={type}>{type}</option>
-                      ))}
-                    </select>
+                    <label className="block text-sm font-medium text-slate-700 mb-1">Code *</label>
+                    <div className="flex items-center gap-2">
+                      <span className="text-lg font-mono font-semibold text-slate-600">{ACCOUNT_TYPE_PREFIXES[newAccount.account_type]}</span>
+                      <input
+                        type="text"
+                        value={newAccount.codeDigits}
+                        onChange={(e) => {
+                          const value = e.target.value.replace(/\D/g, '').slice(0, 3)
+                          setNewAccount({ 
+                            ...newAccount, 
+                            codeDigits: value,
+                            code: ACCOUNT_TYPE_PREFIXES[newAccount.account_type] + value
+                          })
+                        }}
+                        placeholder="000"
+                        maxLength="3"
+                        className="w-20 px-3 py-2 border border-slate-300 rounded-lg font-mono"
+                      />
+                    </div>
+                    <p className="text-xs text-slate-500 mt-1">Enter 3 digits (e.g., 000)</p>
                   </div>
-                  <div>
-                    <label className="block text-sm font-medium text-slate-700 mb-1">Subcategory</label>
-                    <select
-                      value={newAccount.subcategory}
-                      onChange={(e) => setNewAccount({ ...newAccount, subcategory: e.target.value })}
-                      className="w-full px-3 py-2 border border-slate-300 rounded-lg bg-white"
-                    >
-                      <option value="">None</option>
-                      {getSubcategoriesForType(newAccount.account_type).map(sub => (
-                        <option key={sub.id} value={sub.name}>{sub.name}</option>
-                      ))}
-                    </select>
-                    <p className="text-xs text-slate-500 mt-1">Or manage subcategories above</p>
-                  </div>
+                  
+                  {/* 5. Add Button */}
                   <div className="flex items-end">
                     <Button onClick={handleAddAccount} className="w-full">
                       <Plus className="h-4 w-4 mr-2" />
@@ -1367,13 +1542,22 @@ export function Accounting() {
                           const balance = trialBalance.find(tb => tb.id === account.id)
                           const netBalance = balance?.net_balance || 0
                           
+                          const isBankAccount = ['Bank Account', 'Digital Wallet', 'Cash'].includes(account.subcategory)
+                          
                           return (
-                            <div key={account.id} className="flex items-center justify-between p-3 bg-slate-50 rounded-lg hover:bg-slate-100">
+                            <div key={account.id} className={`flex items-center justify-between p-3 rounded-lg hover:bg-slate-100 ${
+                              isBankAccount ? 'bg-blue-50 border border-blue-200' : 'bg-slate-50'
+                            }`}>
                               <div className="flex items-center space-x-4 flex-1">
                                 <span className="font-mono text-slate-500 w-16">{account.code}</span>
                                 <div className="flex-1">
-                                  <span>{account.name}</span>
-                                  {account.subcategory && (
+                                  <div className="flex items-center gap-2">
+                                    <span>{account.name}</span>
+                                    {isBankAccount && (
+                                      <span className="px-2 py-0.5 text-xs bg-blue-100 text-blue-700 rounded font-medium">{account.subcategory}</span>
+                                    )}
+                                  </div>
+                                  {account.subcategory && !isBankAccount && (
                                     <span className="ml-2 text-xs text-slate-400">• {account.subcategory}</span>
                                   )}
                                 </div>
@@ -1403,6 +1587,160 @@ export function Accounting() {
             )}
           </CardContent>
         </Card>
+      )}
+
+      {/* Bank Account Modal */}
+      {showBankAccountModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <Card className="w-full max-w-lg max-h-[90vh] overflow-y-auto">
+            <CardHeader>
+              <div className="flex items-center justify-between">
+                <CardTitle>Add Bank Account</CardTitle>
+                <button onClick={resetBankAccountForm} className="text-slate-400 hover:text-slate-600">
+                  <X className="h-5 w-5" />
+                </button>
+              </div>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-4">
+                {/* Account Type Selection */}
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-2">Account Type *</label>
+                  <div className="grid grid-cols-3 gap-2">
+                    {[
+                      { value: 'Bank Account', label: 'Bank Account', icon: Building2, color: 'blue' },
+                      { value: 'Digital Wallet', label: 'Digital Wallet', icon: Wallet, color: 'purple' },
+                      { value: 'Cash', label: 'Cash', icon: Banknote, color: 'green' }
+                    ].map(type => {
+                      const Icon = type.icon
+                      const isSelected = newBankAccount.account_type === type.value
+                      return (
+                        <button
+                          key={type.value}
+                          type="button"
+                          onClick={() => setNewBankAccount({ ...newBankAccount, account_type: type.value, institution_name: type.value === 'Cash' ? '' : newBankAccount.institution_name })}
+                          className={`p-3 rounded-lg border-2 transition-all ${
+                            isSelected 
+                              ? 'border-blue-500 bg-blue-50' 
+                              : 'border-slate-200 hover:border-slate-300'
+                          }`}
+                        >
+                          <Icon className={`h-6 w-6 mx-auto mb-1 ${isSelected ? 'text-blue-600' : 'text-slate-400'}`} />
+                          <p className={`text-xs font-medium ${isSelected ? 'text-blue-700' : 'text-slate-600'}`}>
+                            {type.label}
+                          </p>
+                        </button>
+                      )
+                    })}
+                  </div>
+                </div>
+
+                {/* Account Name */}
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">Account Name *</label>
+                  <input
+                    type="text"
+                    value={newBankAccount.account_name}
+                    onChange={(e) => setNewBankAccount({ ...newBankAccount, account_name: e.target.value })}
+                    placeholder="e.g., Main Checking, Savings, Petty Cash"
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+
+                {/* Institution Name - Only for Bank Account and Digital Wallet */}
+                {newBankAccount.account_type !== 'Cash' && (
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-1">
+                      Institution Name *
+                    </label>
+                    <input
+                      type="text"
+                      value={newBankAccount.institution_name}
+                      onChange={(e) => setNewBankAccount({ ...newBankAccount, institution_name: e.target.value })}
+                      placeholder={newBankAccount.account_type === 'Bank Account' ? 'e.g., Chase, Bank of America' : 'e.g., PayPal, Venmo, Cash App'}
+                      className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                  </div>
+                )}
+
+                {/* Account Number - Optional */}
+                {newBankAccount.account_type !== 'Cash' && (
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-1">Account Number (Optional)</label>
+                    <input
+                      type="text"
+                      value={newBankAccount.account_number}
+                      onChange={(e) => setNewBankAccount({ ...newBankAccount, account_number: e.target.value })}
+                      placeholder="Last 4 digits for reference"
+                      className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                  </div>
+                )}
+
+                {/* Currency */}
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">Currency</label>
+                  <select
+                    value={newBankAccount.currency_code}
+                    onChange={(e) => setNewBankAccount({ ...newBankAccount, currency_code: e.target.value })}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  >
+                    <option value="USD">USD - US Dollar</option>
+                    <option value="EUR">EUR - Euro</option>
+                    <option value="GBP">GBP - British Pound</option>
+                    <option value="ZAR">ZAR - South African Rand</option>
+                    <option value="NGN">NGN - Nigerian Naira</option>
+                    <option value="KES">KES - Kenyan Shilling</option>
+                    <option value="GHS">GHS - Ghanaian Cedi</option>
+                  </select>
+                </div>
+
+                {/* Notes */}
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">Notes (Optional)</label>
+                  <textarea
+                    value={newBankAccount.notes}
+                    onChange={(e) => setNewBankAccount({ ...newBankAccount, notes: e.target.value })}
+                    placeholder="Any additional notes about this account"
+                    rows={2}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+
+                {/* Info Box */}
+                <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg text-sm space-y-2">
+                  <div className="flex items-start gap-2">
+                    <div className="mt-0.5">
+                      <Info className="h-4 w-4 text-blue-600" />
+                    </div>
+                    <div className="text-blue-700">
+                      <p className="font-semibold mb-1">Account Code Assignment</p>
+                      <p className="mb-2">A unique 4-digit account code will be automatically assigned:</p>
+                      <ul className="space-y-1 ml-2">
+                        <li><span className="font-mono font-semibold">10XX</span> - Bank Account (e.g., 1001, 1002)</li>
+                        <li><span className="font-mono font-semibold">11XX</span> - Digital Wallet (e.g., 1101, 1102)</li>
+                        <li><span className="font-mono font-semibold">12XX</span> - Cash (e.g., 1201, 1202)</li>
+                      </ul>
+                      <p className="mt-2 text-xs">
+                        <strong>Note:</strong> This account will appear in your Chart of Accounts under <strong>Assets</strong>.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Actions */}
+                <div className="flex space-x-3 pt-4">
+                  <Button onClick={handleSaveBankAccount} className="flex-1">
+                    Add Account
+                  </Button>
+                  <Button onClick={resetBankAccountForm} variant="secondary" className="flex-1">
+                    Cancel
+                  </Button>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
       )}
     </div>
   )

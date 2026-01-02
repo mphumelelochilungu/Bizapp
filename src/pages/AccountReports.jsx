@@ -696,6 +696,7 @@ export function AccountReports() {
   const generateRevenueAnalysis = () => {
     const revenueAccounts = accounts.filter(a => a.account_type === 'Revenue')
     
+    // Current period revenues
     const revenues = revenueAccounts.map(account => {
       const { balance } = getAccountBalanceInRange(account.id, dateRange.startDate, dateRange.endDate)
       return { ...account, amount: Math.abs(balance) }
@@ -703,10 +704,139 @@ export function AccountReports() {
 
     const totalRevenue = revenues.reduce((sum, a) => sum + a.amount, 0)
 
+    // Categorize revenue sources
+    const revenueByCategory = {
+      'Service Fees': revenues.filter(r => 
+        r.name.toLowerCase().includes('service') || 
+        r.name.toLowerCase().includes('fee') ||
+        r.name.toLowerCase().includes('consulting') ||
+        r.name.toLowerCase().includes('professional')
+      ),
+      'Licenses & Permits': revenues.filter(r => 
+        r.name.toLowerCase().includes('license') || 
+        r.name.toLowerCase().includes('permit')
+      ),
+      'Subscriptions': revenues.filter(r => 
+        r.name.toLowerCase().includes('subscription') || 
+        r.name.toLowerCase().includes('membership')
+      ),
+      'Sales': revenues.filter(r => 
+        r.name.toLowerCase().includes('sales') || 
+        r.name.toLowerCase().includes('product') ||
+        r.name.toLowerCase().includes('goods')
+      ),
+      'Grants & Other Income': revenues.filter(r => 
+        r.name.toLowerCase().includes('grant') || 
+        r.name.toLowerCase().includes('donation') ||
+        r.name.toLowerCase().includes('other') || 
+        r.name.toLowerCase().includes('misc') ||
+        r.name.toLowerCase().includes('interest')
+      )
+    }
+
+    // Calculate category totals
+    const categoryTotals = Object.entries(revenueByCategory).map(([category, items]) => ({
+      category,
+      amount: items.reduce((sum, item) => sum + item.amount, 0),
+      items
+    })).filter(cat => cat.amount > 0)
+
+    // Uncategorized revenues
+    const categorizedIds = new Set()
+    Object.values(revenueByCategory).forEach(items => {
+      items.forEach(item => categorizedIds.add(item.id))
+    })
+    const uncategorized = revenues.filter(r => !categorizedIds.has(r.id))
+    if (uncategorized.length > 0) {
+      categoryTotals.push({
+        category: 'Uncategorized',
+        amount: uncategorized.reduce((sum, item) => sum + item.amount, 0),
+        items: uncategorized
+      })
+    }
+
+    // Previous period comparison (same date range, previous year)
+    const startDate = new Date(dateRange.startDate)
+    const endDate = new Date(dateRange.endDate)
+    const prevYearStart = new Date(startDate)
+    prevYearStart.setFullYear(prevYearStart.getFullYear() - 1)
+    const prevYearEnd = new Date(endDate)
+    prevYearEnd.setFullYear(prevYearEnd.getFullYear() - 1)
+
+    const prevYearRevenues = revenueAccounts.map(account => {
+      const { balance } = getAccountBalanceInRange(account.id, prevYearStart.toISOString().split('T')[0], prevYearEnd.toISOString().split('T')[0])
+      return { ...account, amount: Math.abs(balance) }
+    }).filter(a => a.amount > 0)
+
+    const prevYearTotal = prevYearRevenues.reduce((sum, a) => sum + a.amount, 0)
+    const yearOverYearGrowth = prevYearTotal > 0 ? ((totalRevenue - prevYearTotal) / prevYearTotal) * 100 : 0
+    const yearOverYearChange = totalRevenue - prevYearTotal
+
+    // Previous month comparison
+    const prevMonthStart = new Date(startDate)
+    prevMonthStart.setMonth(prevMonthStart.getMonth() - 1)
+    const prevMonthEnd = new Date(endDate)
+    prevMonthEnd.setMonth(prevMonthEnd.getMonth() - 1)
+
+    const prevMonthRevenues = revenueAccounts.map(account => {
+      const { balance } = getAccountBalanceInRange(account.id, prevMonthStart.toISOString().split('T')[0], prevMonthEnd.toISOString().split('T')[0])
+      return { ...account, amount: Math.abs(balance) }
+    }).filter(a => a.amount > 0)
+
+    const prevMonthTotal = prevMonthRevenues.reduce((sum, a) => sum + a.amount, 0)
+    const monthOverMonthGrowth = prevMonthTotal > 0 ? ((totalRevenue - prevMonthTotal) / prevMonthTotal) * 100 : 0
+    const monthOverMonthChange = totalRevenue - prevMonthTotal
+
+    // Monthly trend (last 12 months)
+    const monthlyTrend = []
+    for (let i = 11; i >= 0; i--) {
+      const monthStart = new Date(endDate)
+      monthStart.setMonth(monthStart.getMonth() - i)
+      monthStart.setDate(1)
+      
+      const monthEnd = new Date(monthStart)
+      monthEnd.setMonth(monthEnd.getMonth() + 1)
+      monthEnd.setDate(0)
+
+      const monthRevenue = revenueAccounts.reduce((sum, account) => {
+        const { balance } = getAccountBalanceInRange(account.id, monthStart.toISOString().split('T')[0], monthEnd.toISOString().split('T')[0])
+        return sum + Math.abs(balance)
+      }, 0)
+
+      monthlyTrend.push({
+        month: monthStart.toLocaleDateString('en-US', { month: 'short', year: 'numeric' }),
+        revenue: monthRevenue,
+        date: monthStart
+      })
+    }
+
+    // Budget variance (using average as benchmark)
+    const averageMonthlyRevenue = monthlyTrend.reduce((sum, m) => sum + m.revenue, 0) / monthlyTrend.length
+    const budgetVariance = totalRevenue - averageMonthlyRevenue
+    const budgetVariancePercent = averageMonthlyRevenue > 0 ? (budgetVariance / averageMonthlyRevenue) * 100 : 0
+
+    // Identify strong and weak performers
+    const strongPerformers = revenues.filter(r => r.amount > totalRevenue * 0.15) // >15% of total
+    const weakPerformers = revenues.filter(r => r.amount < totalRevenue * 0.05 && r.amount > 0) // <5% of total
+
     setReportData({
       type: 'revenue-analysis',
       revenues,
-      totalRevenue
+      totalRevenue,
+      categoryTotals,
+      revenueByCategory,
+      prevYearTotal,
+      yearOverYearGrowth,
+      yearOverYearChange,
+      prevMonthTotal,
+      monthOverMonthGrowth,
+      monthOverMonthChange,
+      monthlyTrend,
+      averageMonthlyRevenue,
+      budgetVariance,
+      budgetVariancePercent,
+      strongPerformers,
+      weakPerformers
     })
   }
 
@@ -1906,67 +2036,283 @@ export function AccountReports() {
         )
 
       case 'revenue-analysis':
+        if (reportData.revenues.length === 0) {
+          return <p className="text-slate-500 text-center py-8">No revenue recorded in this period</p>
+        }
+
         const revenuePieData = reportData.revenues.map((r, i) => ({ name: r.name, value: r.amount, fill: PIE_COLORS[i % PIE_COLORS.length] }))
+        const categoryPieData = reportData.categoryTotals?.map((cat, i) => ({ 
+          name: cat.category, 
+          value: cat.amount, 
+          fill: PIE_COLORS[i % PIE_COLORS.length] 
+        })) || []
         
         return (
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            {/* Left - Data */}
-            <div className="space-y-4">
-              {reportData.revenues.length === 0 ? (
-                <p className="text-slate-500 text-center py-8">No revenue recorded in this period</p>
-              ) : (
-                <>
+          <div className="space-y-6">
+            {/* Performance Summary Cards */}
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+              <Card>
+                <CardContent className="pt-6">
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="text-sm text-slate-600">Total Revenue</div>
+                    <DollarSign className="h-5 w-5 text-green-600" />
+                  </div>
+                  <div className="text-2xl font-bold text-green-600">
+                    {formatCurrency(reportData.totalRevenue)}
+                  </div>
+                  <div className="text-xs text-slate-500 mt-1">Current Period</div>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardContent className="pt-6">
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="text-sm text-slate-600">YoY Growth</div>
+                    {reportData.yearOverYearGrowth >= 0 ? 
+                      <TrendingUp className="h-5 w-5 text-green-600" /> : 
+                      <TrendingDown className="h-5 w-5 text-red-600" />
+                    }
+                  </div>
+                  <div className={`text-2xl font-bold ${reportData.yearOverYearGrowth >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                    {reportData.yearOverYearGrowth >= 0 ? '+' : ''}{reportData.yearOverYearGrowth.toFixed(1)}%
+                  </div>
+                  <div className="text-xs text-slate-500 mt-1">
+                    {formatCurrency(Math.abs(reportData.yearOverYearChange))} vs last year
+                  </div>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardContent className="pt-6">
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="text-sm text-slate-600">MoM Growth</div>
+                    {reportData.monthOverMonthGrowth >= 0 ? 
+                      <TrendingUp className="h-5 w-5 text-blue-600" /> : 
+                      <TrendingDown className="h-5 w-5 text-orange-600" />
+                    }
+                  </div>
+                  <div className={`text-2xl font-bold ${reportData.monthOverMonthGrowth >= 0 ? 'text-blue-600' : 'text-orange-600'}`}>
+                    {reportData.monthOverMonthGrowth >= 0 ? '+' : ''}{reportData.monthOverMonthGrowth.toFixed(1)}%
+                  </div>
+                  <div className="text-xs text-slate-500 mt-1">
+                    {formatCurrency(Math.abs(reportData.monthOverMonthChange))} vs last month
+                  </div>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardContent className="pt-6">
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="text-sm text-slate-600">Budget Variance</div>
+                    {reportData.budgetVariancePercent >= 0 ? 
+                      <ArrowUpRight className="h-5 w-5 text-green-600" /> : 
+                      <ArrowDownRight className="h-5 w-5 text-red-600" />
+                    }
+                  </div>
+                  <div className={`text-2xl font-bold ${reportData.budgetVariancePercent >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                    {reportData.budgetVariancePercent >= 0 ? '+' : ''}{reportData.budgetVariancePercent.toFixed(1)}%
+                  </div>
+                  <div className="text-xs text-slate-500 mt-1">
+                    {formatCurrency(Math.abs(reportData.budgetVariance))} vs avg
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
+
+            {/* Revenue by Category */}
+            {reportData.categoryTotals && reportData.categoryTotals.length > 0 && (
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <div className="border rounded-lg p-4">
+                  <h4 className="font-semibold text-slate-700 mb-4">Revenue by Source</h4>
                   <div className="space-y-3">
-                    {reportData.revenues.map(revenue => {
-                      const percentage = (revenue.amount / reportData.totalRevenue) * 100
+                    {reportData.categoryTotals.map((cat, i) => {
+                      const percentage = (cat.amount / reportData.totalRevenue) * 100
                       return (
-                        <div key={revenue.id} className="space-y-1">
+                        <div key={i} className="space-y-2">
                           <div className="flex justify-between text-sm">
-                            <span>{revenue.name}</span>
-                            <span className="font-medium">{formatCurrency(revenue.amount)} ({percentage.toFixed(1)}%)</span>
+                            <span className="font-medium">{cat.category}</span>
+                            <span className="text-slate-600">{formatCurrency(cat.amount)} ({percentage.toFixed(1)}%)</span>
                           </div>
                           <div className="w-full bg-slate-200 rounded-full h-2">
                             <div 
-                              className="bg-green-500 h-2 rounded-full" 
+                              className="bg-blue-500 h-2 rounded-full" 
                               style={{ width: `${percentage}%` }}
                             />
                           </div>
+                          {cat.items && cat.items.length > 0 && (
+                            <div className="pl-4 space-y-1">
+                              {cat.items.map(item => (
+                                <div key={item.id} className="flex justify-between text-xs text-slate-500">
+                                  <span>• {item.name}</span>
+                                  <span>{formatCurrency(item.amount)}</span>
+                                </div>
+                              ))}
+                            </div>
+                          )}
                         </div>
                       )
                     })}
                   </div>
-                  <div className="p-4 bg-green-50 rounded-lg flex justify-between">
-                    <span className="font-bold">Total Revenue</span>
-                    <span className="font-bold text-green-600">{formatCurrency(reportData.totalRevenue)}</span>
-                  </div>
-                </>
-              )}
-            </div>
+                </div>
 
-            {/* Right - Chart */}
-            {revenuePieData.length > 0 && (
-              <div className="bg-slate-50 rounded-lg p-4">
-                <h4 className="text-sm font-medium text-slate-600 mb-3">Revenue Distribution</h4>
-                <ResponsiveContainer width="100%" height={300}>
-                  <PieChart>
-                    <Pie
-                      data={revenuePieData}
-                      cx="50%"
-                      cy="50%"
-                      outerRadius={100}
-                      dataKey="value"
-                      label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
-                      labelLine={true}
-                    >
-                      {revenuePieData.map((entry, index) => (
-                        <Cell key={`cell-${index}`} fill={entry.fill} />
-                      ))}
-                    </Pie>
+                <div className="bg-slate-50 rounded-lg p-4">
+                  <h4 className="text-sm font-medium text-slate-600 mb-3">Category Distribution</h4>
+                  <ResponsiveContainer width="100%" height={300}>
+                    <PieChart>
+                      <Pie
+                        data={categoryPieData}
+                        cx="50%"
+                        cy="50%"
+                        outerRadius={90}
+                        dataKey="value"
+                        label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
+                        labelLine={true}
+                      >
+                        {categoryPieData.map((entry, index) => (
+                          <Cell key={`cell-${index}`} fill={entry.fill} />
+                        ))}
+                      </Pie>
+                      <Tooltip formatter={(value) => formatCurrency(value)} />
+                    </PieChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+            )}
+
+            {/* Monthly Trend */}
+            {reportData.monthlyTrend && reportData.monthlyTrend.length > 0 && (
+              <div className="border rounded-lg p-4">
+                <h4 className="font-semibold text-slate-700 mb-4">12-Month Revenue Trend</h4>
+                <ResponsiveContainer width="100%" height={250}>
+                  <LineChart data={reportData.monthlyTrend}>
+                    <CartesianGrid strokeDasharray="3 3" />
+                    <XAxis 
+                      dataKey="month" 
+                      tick={{ fontSize: 11 }}
+                      angle={-45}
+                      textAnchor="end"
+                      height={80}
+                    />
+                    <YAxis tick={{ fontSize: 12 }} tickFormatter={(v) => `${(v/1000).toFixed(0)}k`} />
                     <Tooltip formatter={(value) => formatCurrency(value)} />
-                  </PieChart>
+                    <Line 
+                      type="monotone" 
+                      dataKey="revenue" 
+                      stroke="#3b82f6" 
+                      strokeWidth={2}
+                      dot={{ fill: '#3b82f6', r: 4 }}
+                      name="Revenue"
+                    />
+                  </LineChart>
                 </ResponsiveContainer>
               </div>
             )}
+
+            {/* Period Comparison & Budget Variance */}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              <div className="border rounded-lg p-4">
+                <h4 className="font-semibold text-slate-700 mb-4">Period Comparison</h4>
+                <div className="space-y-4">
+                  <div className="flex justify-between items-center p-3 bg-slate-50 rounded">
+                    <div>
+                      <div className="text-sm text-slate-600">Current Period</div>
+                      <div className="text-lg font-bold text-slate-900">{formatCurrency(reportData.totalRevenue)}</div>
+                    </div>
+                  </div>
+                  <div className="flex justify-between items-center p-3 bg-slate-50 rounded">
+                    <div>
+                      <div className="text-sm text-slate-600">Previous Month</div>
+                      <div className="text-lg font-semibold text-slate-700">{formatCurrency(reportData.prevMonthTotal)}</div>
+                    </div>
+                    <div className={`text-sm font-medium ${reportData.monthOverMonthGrowth >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                      {reportData.monthOverMonthGrowth >= 0 ? '+' : ''}{reportData.monthOverMonthGrowth.toFixed(1)}%
+                    </div>
+                  </div>
+                  <div className="flex justify-between items-center p-3 bg-slate-50 rounded">
+                    <div>
+                      <div className="text-sm text-slate-600">Previous Year</div>
+                      <div className="text-lg font-semibold text-slate-700">{formatCurrency(reportData.prevYearTotal)}</div>
+                    </div>
+                    <div className={`text-sm font-medium ${reportData.yearOverYearGrowth >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                      {reportData.yearOverYearGrowth >= 0 ? '+' : ''}{reportData.yearOverYearGrowth.toFixed(1)}%
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="border rounded-lg p-4">
+                <h4 className="font-semibold text-slate-700 mb-4">Budget vs Actual</h4>
+                <div className="space-y-4">
+                  <div className="flex justify-between items-center p-3 bg-blue-50 rounded">
+                    <div>
+                      <div className="text-sm text-slate-600">Budgeted (Avg)</div>
+                      <div className="text-lg font-semibold text-slate-700">{formatCurrency(reportData.averageMonthlyRevenue)}</div>
+                    </div>
+                  </div>
+                  <div className="flex justify-between items-center p-3 bg-green-50 rounded">
+                    <div>
+                      <div className="text-sm text-slate-600">Actual Revenue</div>
+                      <div className="text-lg font-bold text-green-600">{formatCurrency(reportData.totalRevenue)}</div>
+                    </div>
+                  </div>
+                  <div className={`flex justify-between items-center p-3 rounded ${reportData.budgetVariance >= 0 ? 'bg-green-50' : 'bg-red-50'}`}>
+                    <div>
+                      <div className="text-sm text-slate-600">Variance</div>
+                      <div className={`text-lg font-bold ${reportData.budgetVariance >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                        {reportData.budgetVariance >= 0 ? '+' : ''}{formatCurrency(reportData.budgetVariance)}
+                      </div>
+                    </div>
+                    <div className={`text-sm font-medium ${reportData.budgetVariancePercent >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                      {reportData.budgetVariancePercent >= 0 ? '+' : ''}{reportData.budgetVariancePercent.toFixed(1)}%
+                    </div>
+                  </div>
+                  <div className="text-xs text-slate-500 italic">
+                    * Budget based on 12-month average
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Strong & Weak Performers */}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              {reportData.strongPerformers && reportData.strongPerformers.length > 0 && (
+                <div className="border rounded-lg p-4 bg-green-50">
+                  <h4 className="font-semibold text-green-700 mb-3 flex items-center">
+                    <TrendingUp className="h-5 w-5 mr-2" />
+                    Strong Performers (&gt;15% of total)
+                  </h4>
+                  <div className="space-y-2">
+                    {reportData.strongPerformers.map(rev => (
+                      <div key={rev.id} className="flex justify-between text-sm">
+                        <span className="text-slate-700">{rev.name}</span>
+                        <span className="font-medium text-green-700">
+                          {formatCurrency(rev.amount)} ({((rev.amount / reportData.totalRevenue) * 100).toFixed(1)}%)
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {reportData.weakPerformers && reportData.weakPerformers.length > 0 && (
+                <div className="border rounded-lg p-4 bg-orange-50">
+                  <h4 className="font-semibold text-orange-700 mb-3 flex items-center">
+                    <TrendingDown className="h-5 w-5 mr-2" />
+                    Weak Performers (&lt;5% of total)
+                  </h4>
+                  <div className="space-y-2">
+                    {reportData.weakPerformers.map(rev => (
+                      <div key={rev.id} className="flex justify-between text-sm">
+                        <span className="text-slate-700">{rev.name}</span>
+                        <span className="font-medium text-orange-700">
+                          {formatCurrency(rev.amount)} ({((rev.amount / reportData.totalRevenue) * 100).toFixed(1)}%)
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
         )
 
